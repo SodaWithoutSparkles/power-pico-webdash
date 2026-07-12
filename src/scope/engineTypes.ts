@@ -27,6 +27,9 @@ export interface ScopeStatus {
     liveV: number;
     liveI: number;
     liveW: number;
+    sessionEnergyJ: number; // accumulated since last reset
+    sessionChargeC: number; // accumulated since last reset
+    tZeroOffsetUs: number; // current T+0 offset (mirrored for UI)
 }
 
 // One averaged sample pushed to the display ring.

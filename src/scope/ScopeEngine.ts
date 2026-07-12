@@ -41,6 +41,11 @@ export class ScopeEngine {
     private tZeroOffsetUs = 0;
     private lastRawTsUs = 0;
 
+    // Session integrators (energy J, charge C) — accumulated per averaged point.
+    private sessionEnergyJ = 0;
+    private sessionChargeC = 0;
+    private lastIntegrateTUs = 0; // display-time of previous integrated point
+
     private pktCount = 0;
     private sampleCount = 0;
     private pktWindowStart = 0;
@@ -84,6 +89,52 @@ export class ScopeEngine {
     }
     resetTZero(): void {
         this.tZeroOffsetUs = 0;
+        this.lastIntegrateTUs = 0; // avoid spurious dt after offset shift
+    }
+
+    // Set T+0 to the latest raw timestamp (UI "Set T=0" button).
+    markTZero(): void {
+        this.tZeroOffsetUs = this.lastRawTsUs;
+        this.lastIntegrateTUs = 0; // re-baseline integration at new origin
+        this.emitStatus();
+    }
+
+    resetSessionIntegrators(): void {
+        this.sessionEnergyJ = 0;
+        this.sessionChargeC = 0;
+        this.lastIntegrateTUs = 0;
+        this.emitStatus();
+    }
+
+    // Energy/charge over a display-time window [tStartUs, tEndUs] (us).
+    // Trapezoid-integrate W and I across in-range points in the ring.
+    computeRegion(tStartUs: number, tEndUs: number): { energyJ: number; chargeC: number } {
+        const snap = this.ring.snapshot();
+        const lo = Math.min(tStartUs, tEndUs);
+        const hi = Math.max(tStartUs, tEndUs);
+        let energyJ = 0;
+        let chargeC = 0;
+        let prevT: number | null = null;
+        let prevW = 0;
+        let prevI = 0;
+        for (let k = 0; k < snap.t.length; k++) {
+            const t = snap.t[k];
+            if (t < lo || t > hi) {
+                prevT = null;
+                continue;
+            }
+            const w = snap.w[k];
+            const i = snap.i[k];
+            if (prevT !== null) {
+                const dtS = (t - prevT) / 1_000_000;
+                energyJ += 0.5 * (w + prevW) * dtS;
+                chargeC += 0.5 * (i + prevI) * dtS;
+            }
+            prevT = t;
+            prevW = w;
+            prevI = i;
+        }
+        return { energyJ, chargeC };
     }
 
     // --- Connection -------------------------------------------------------
@@ -125,6 +176,9 @@ export class ScopeEngine {
         this.sampleCount = 0;
         this.pktWindowCount = 0;
         this.lastRawTsUs = 0;
+        this.sessionEnergyJ = 0;
+        this.sessionChargeC = 0;
+        this.lastIntegrateTUs = 0;
         this.emitStatus();
     }
 
@@ -219,6 +273,21 @@ export class ScopeEngine {
 
         const displayT = point.t - this.tZeroOffsetUs;
         this.ring.push({ t: displayT, v: point.v, i: point.i, w: point.w });
+
+        // Session integrators: trapezoid over display-time deltas between
+        // averaged points. First point only establishes the baseline.
+        if (this.lastIntegrateTUs === 0) {
+            this.lastIntegrateTUs = displayT;
+        } else {
+            const dtUs = displayT - this.lastIntegrateTUs;
+            if (dtUs > 0) {
+                const dtS = dtUs / 1_000_000;
+                this.sessionEnergyJ += point.w * dtS;
+                this.sessionChargeC += point.i * dtS;
+                this.lastIntegrateTUs = displayT;
+            }
+        }
+
         this.emitStatus(point.v, point.i, point.w);
     }
 
@@ -246,6 +315,9 @@ export class ScopeEngine {
             liveV,
             liveI,
             liveW,
+            sessionEnergyJ: this.sessionEnergyJ,
+            sessionChargeC: this.sessionChargeC,
+            tZeroOffsetUs: this.tZeroOffsetUs,
         };
         this.statusCb?.(status);
     }
