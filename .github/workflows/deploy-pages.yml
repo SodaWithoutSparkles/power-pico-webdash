@@ -1,0 +1,60 @@
+name: Deploy Static Content to Pages
+
+on:
+  push:
+    branches: ["deploy"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+      - name: Verify Node.js version
+        run: node -v
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set build time
+        run: |
+          # record build time in ISO 8601 (UTC)
+          echo "VITE_BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> $GITHUB_ENV
+          echo "VITE_BUILD_COMMIT=${{ github.sha }}" >> $GITHUB_ENV
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_BUILD_COMMIT: ${{ env.VITE_BUILD_COMMIT }}
+          VITE_BUILD_TIME: ${{ env.VITE_BUILD_TIME }}
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './dist'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
