@@ -46,7 +46,7 @@ into small modules so the React layer (Phase 3/4) only wires lifecycle.
   `setInterval` at `pktRateHz`. Status `mode: "simulate"`.
 
 ## Decisions / notes
-- **No Web Worker** — ~11.5 KB/s, main thread is fine (per plan).
+- **No Web Worker** — ~81 KB/s (81 B/pkt × 1000 pkt/s, 10 samples/packet), main thread is fine (per plan).
 - **Strip-only TS constraint**: Node's `--experimental-strip-types` rejects
   parameter properties (`constructor(public x)`). All engine classes use
   explicit field declarations + assignment. Tests import with `.ts` extension

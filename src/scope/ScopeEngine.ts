@@ -1,4 +1,4 @@
-// Main-thread scope engine (Phase 2). No Web Worker — ~11.5 KB/s is trivial.
+// Main-thread scope engine (Phase 2). No Web Worker — ~81 KB/s (81 B/pkt × 1000 pkt/s, 10 samples) is trivial.
 // Pipeline: read chunks → PacketParser → AveragingBuffer (k) → DisplayRingBuffer (N).
 // Read-only serial. T+0 offset + backward-jump guard keep the trace continuous.
 

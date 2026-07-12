@@ -164,8 +164,9 @@ browser crash). Add a **persistent storage** option in settings.
 - **Sample window** — save 1 sample from a **X packets** average (sub-text shows the
   equivalent per-second rate, derived from `pktPerSec`).
 - **Sample time unit** — `sec` / `min` / `hour` (granularity label for the log).
-- **Expected storage size** — displayed live, computed from the hard-coded
-  packet byte size × expected packets received (so the user can judge disk use
+- **Expected storage size** — displayed live, computed from the packet byte
+  size (typical 81 B = 11 B header + 10×7 B samples; protocol max 711 B =
+  100 samples) × expected packets received (so the user can judge disk use
   before enabling).
 - **Compression interval** — `0` = off; any other value = seconds between
   compression passes.

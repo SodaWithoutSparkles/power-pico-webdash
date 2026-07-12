@@ -7,7 +7,14 @@ averaging → display ring), rendered with **uPlot** in a `requestAnimationFrame
 loop decoupled from ingestion. The existing drawing app is just the template
 shell; we repurpose its layout (center canvas, right panel, bottom bar, left
 toolbar) for the scope. Main-thread engine (no Web Worker — overkill at
-~11.5 KB/s). Read-only serial.
+~81 KB/s — 81 B/pkt (11 B header + 10×7 B samples) × 1000 pkt/s). Read-only serial.
+
+**Baud is a dummy var over USB CDC.** The Pico presents a USB CDC-ACM serial
+port, where the `baudRate` passed to `port.open()` is ignored by the device —
+changing it (e.g. 9600 vs 115200) does not alter throughput. The real byte rate
+is set entirely by the firmware's emission rate (~81 KB/s at 1000 pkt/s). Do NOT
+size buffers/workers against a "baud capacity" (115200 / 10 ≈ 11.5 KB/s); that
+limit applies only to true UART, not USB CDC.
 
 ## Steps
 
@@ -152,7 +159,7 @@ toolbar) for the scope. Main-thread engine (no Web Worker — overkill at
 1. `npm install` (pulls uplot).
 2. `node --test --experimental-strip-types src/scope/decode.test.ts` → decode passes.
 3. `npm run dev` → open localhost in any supporting browser (need secure context
-   for Web Serial). Click **Simulate** → traces scroll at ~10 pkt/s; status = Run.
+   for Web Serial). Click **Simulate** → traces scroll at ~1000 pkt/s (10 samples/packet, 81 B/pkt); status = Run.
 4. Toggle channels; change avg size `k` → coarser/finer trace; change window `N`
    → more/less history.
 5. Scroll over plot → vertical/horizontal zoom; settings scale overrides.

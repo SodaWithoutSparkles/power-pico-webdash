@@ -34,7 +34,7 @@ SCALE_HIGH_UA_PER_LSB = 3.0 / 4096.0 / 50.0 / 0.005 * 1_000_000.0
 VOLTS_PER_ADC_LSB = (3000.0 / 4095.0) * 11.0 / 1000.0
 
 """
-Format (max 711 bytes per packet):
+Format (max 711 bytes / 100 samples per packet; typical firmware packet = 10 samples = 81 bytes):
 - Header: 2 bytes (0xAA55)
 - Timestamp: 8 bytes (little-endian uint64)
 - Data Count: 1 byte (uint8); <= 100 samples per packet
