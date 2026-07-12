@@ -153,6 +153,7 @@ export class ScopeEngine {
         this.port = ports[0] ?? (await navigator.serial.requestPort());
         await this.port.open({ baudRate: this.config.baudRate });
         this.mode = "serial";
+        this.emitStatus(); // propagate mode→store so Start enables immediately
     }
 
     // --- Lifecycle --------------------------------------------------------

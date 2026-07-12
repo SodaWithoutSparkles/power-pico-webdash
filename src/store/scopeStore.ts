@@ -95,7 +95,11 @@ let lastStatusPush = 0;
 export const useScopeStore = create<ScopeStoreState>((set, get) => {
     engine.onStatus((s: ScopeStatus) => {
         const now = performance.now();
-        if (now - lastStatusPush < STATUS_THROTTLE_MS) return;
+        // Critical state (running/mode) must propagate immediately — never let
+        // the throttle drop a start/pause/connect transition.
+        const st = get();
+        const criticalChanged = st.running !== s.running || st.mode !== s.mode;
+        if (!criticalChanged && now - lastStatusPush < STATUS_THROTTLE_MS) return;
         lastStatusPush = now;
         set({
             running: s.running,
