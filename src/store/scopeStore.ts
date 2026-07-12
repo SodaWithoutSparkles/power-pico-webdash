@@ -14,10 +14,23 @@ const DEFAULT_CONFIG: ScopeConfig = {
     avgSize: 10,
     windowSize: 1000,
     channels: { v: true, i: true, w: true },
+    vScale: { auto: true, min: 0, max: 0 },
+    hZoomSec: 0,
 };
 
 // Throttle status → React to ~10 Hz so high pkt rates don't thrash renders.
 const STATUS_THROTTLE_MS = 100;
+
+export type NotificationType = "info" | "success" | "warning" | "error";
+
+export interface ScopeNotification {
+    id: string;
+    type: NotificationType;
+    title?: string;
+    message: string;
+    detail?: string;
+    timeout?: number;
+}
 
 export interface RegionSelection {
     tStartUs: number; // display-time (us) of drag start
@@ -57,8 +70,14 @@ export interface ScopeStoreState {
     setRegion: (tStartUs: number, tEndUs: number) => void;
     clearRegion: () => void;
 
+    // notifications (engine errors + lifecycle toasts)
+    notifications: ScopeNotification[];
+    notify: (n: Omit<ScopeNotification, "id">) => void;
+    dismissNotification: (id: string) => void;
+
     // lifecycle
     connect: () => Promise<void>;
+    simulate: () => void;
     start: () => void;
     pause: () => void;
     clear: () => void;
@@ -92,8 +111,7 @@ export const useScopeStore = create<ScopeStoreState>((set, get) => {
     });
 
     engine.onError((e: Error) => {
-        // ponytail: surface via console; UI wires NotificationCenter in Phase 5.
-        console.error("[scope]", e.message);
+        get().notify({ type: "error", title: "Scope error", message: e.message });
     });
 
     return {
@@ -130,8 +148,29 @@ export const useScopeStore = create<ScopeStoreState>((set, get) => {
         },
         clearRegion: () => set({ region: null }),
 
+        notifications: [],
+        notify: (n) => {
+            const id = `n_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+            set((s) => ({ notifications: [...s.notifications, { ...n, id }] }));
+        },
+        dismissNotification: (id) =>
+            set((s) => ({ notifications: s.notifications.filter((x) => x.id !== id) })),
+
         connect: async () => {
-            await engine.connect();
+            try {
+                await engine.connect();
+                get().notify({ type: "success", message: "Connected to serial port" });
+            } catch (e) {
+                get().notify({
+                    type: "error",
+                    title: "Connect failed",
+                    message: e instanceof Error ? e.message : String(e),
+                });
+            }
+        },
+        simulate: () => {
+            engine.simulate();
+            get().notify({ type: "info", message: "Simulate mode ready — press Start" });
         },
         start: () => engine.start(),
         pause: () => engine.pause(),

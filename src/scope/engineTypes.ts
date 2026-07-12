@@ -8,11 +8,20 @@ export interface ScopeChannels {
     w: boolean;
 }
 
+// Vertical scale: auto-range, or a fixed [min,max] window.
+export interface VScale {
+    auto: boolean;
+    min: number;
+    max: number;
+}
+
 export interface ScopeConfig {
     baudRate: number;
     avgSize: number; // k: packets in the averaging window
     windowSize: number; // N: display ring capacity
     channels: ScopeChannels;
+    vScale: VScale;
+    hZoomSec: number; // visible time window (seconds); 0 = fit all
 }
 
 export type ScopeMode = "idle" | "serial" | "simulate";

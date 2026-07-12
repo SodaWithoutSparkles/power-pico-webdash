@@ -20,6 +20,8 @@ const DEFAULT_CONFIG: ScopeConfig = {
     avgSize: 10,
     windowSize: 1000,
     channels: { v: true, i: true, w: true },
+    vScale: { auto: true, min: 0, max: 0 },
+    hZoomSec: 0,
 };
 
 // Backward timestamp jump larger than this (us) = device reboot / counter wrap.
@@ -179,6 +181,13 @@ export class ScopeEngine {
         this.sessionEnergyJ = 0;
         this.sessionChargeC = 0;
         this.lastIntegrateTUs = 0;
+        this.emitStatus();
+    }
+
+    // Enter simulate mode without starting ingestion (UI picks Start).
+    simulate(): void {
+        this.mode = "simulate";
+        this.sim.reset();
         this.emitStatus();
     }
 

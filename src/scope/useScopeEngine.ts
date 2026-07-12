@@ -112,11 +112,20 @@ export function useScopeEngine(
         if (!el) return;
 
         const channels = useScopeStore.getState().config.channels;
+        const vScale = useScopeStore.getState().config.vScale;
+
+        const yScale: uPlot.Scale = vScale.auto
+            ? { auto: true }
+            : { min: vScale.min, max: vScale.max };
 
         const opts: uPlot.Options = {
             width: el.clientWidth || 800,
             height: el.clientHeight || 400,
             series: buildSeries(channels),
+            scales: {
+                x: { time: false },
+                y: yScale,
+            },
             axes: [
                 {
                     values: xAxisValues,
@@ -182,6 +191,15 @@ export function useScopeEngine(
             if (channels.i) data.push(snap.i);
             if (channels.w) data.push(snap.w);
             u.setData(data, false);
+
+            // Horizontal zoom: pin x window to [latest - hZoomSec, latest].
+            // Only when user hasn't manually wheel-zoomed (x scale at auto).
+            const hz = useScopeStore.getState().config.hZoomSec;
+            const sx = u.scales.x;
+            if (hz > 0 && snap.t.length > 0 && sx.min == null && sx.max == null) {
+                const latest = snap.t[snap.t.length - 1];
+                u.setScale("x", { min: latest - hz * 1_000_000, max: latest });
+            }
             rafRef.current = requestAnimationFrame(loop);
         };
         rafRef.current = requestAnimationFrame(loop);

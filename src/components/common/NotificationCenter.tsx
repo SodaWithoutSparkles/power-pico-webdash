@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef } from 'react';
-import { useStore } from '../../store/useStore';
-import type { Notification } from '../../store/storeTypes';
+import { useScopeStore } from '../../store/scopeStore';
+import type { ScopeNotification as ScopeNote } from '../../store/scopeStore';
 
 const TYPE_STYLES: Record<string, { border: string; bg: string; text: string }> = {
     info: { border: 'border-blue-500/80', bg: 'bg-blue-900/80', text: 'text-white' },
@@ -10,14 +10,14 @@ const TYPE_STYLES: Record<string, { border: string; bg: string; text: string }> 
 };
 
 export const NotificationCenter: React.FC = () => {
-    const notifications = useStore((state) => state.notifications);
-    const removeNotification = useStore((state) => state.removeNotification);
+    const notifications = useScopeStore((s) => s.notifications);
+    const removeNotification = useScopeStore((s) => s.dismissNotification);
     const timeoutsRef = useRef<Map<string, number>>(new Map());
 
-    const ids = useMemo(() => new Set(notifications.map((n: Notification) => n.id)), [notifications]);
+    const ids = useMemo(() => new Set(notifications.map((n: ScopeNote) => n.id)), [notifications]);
 
     useEffect(() => {
-        notifications.forEach((n: Notification) => {
+        notifications.forEach((n: ScopeNote) => {
             if (timeoutsRef.current.has(n.id)) return;
             const timeout = n.timeout ?? (n.type === 'error' ? 8000 : 5000);
             const timerId = window.setTimeout(() => {
@@ -38,7 +38,7 @@ export const NotificationCenter: React.FC = () => {
 
     return (
         <div className="fixed top-4 right-4 z-[200] flex flex-col gap-2 max-w-sm w-[min(90vw,420px)]">
-            {notifications.map((n: Notification) => {
+            {notifications.map((n: ScopeNote) => {
                 const style = TYPE_STYLES[n.type] ?? TYPE_STYLES.info;
                 return (
                     <div
