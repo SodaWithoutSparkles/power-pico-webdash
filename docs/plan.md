@@ -130,8 +130,8 @@ toolbar) for the scope. Main-thread engine (no Web Worker — overkill at
       `konva`, `clsx` (re-evaluate; uPlot doesn't need them; `clsx` may be
       useful for UI). Remove `tailwind-merge` if no complex class merging.
 
-### Phase 7 — Polish (User input required)
-14. Test on real device @115200 baud; verify live traces, session integrators,
+### Phase 7 — Polish (User input required) (Processing...)
+14. Test on real device @115200 baud; verify live traces, session integrators, drag-region integrators, T+0 reset, auto-discontinuity detection, and all UI controls. Ensure the app is responsive and works across supported browsers (Chrome, Edge, Firefox). 
 15. Themes (dark/light), responsive layout, and accessibility (ARIA labels, keyboard navigation, color contrast). Ensure the UI is intuitive and user-friendly.
 
 ## Phase 8 — Docs
