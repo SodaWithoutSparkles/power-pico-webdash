@@ -8,7 +8,7 @@ export class Simulator {
     private readonly dtUs: number;
 
     constructor(
-        pktRateHz = 10,
+        pktRateHz = 1000,
         samplesPerPacket = 1,
         freqHz = 0.5,
     ) {

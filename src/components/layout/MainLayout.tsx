@@ -2,6 +2,7 @@ import React from 'react';
 import { ScopeHeader } from '../../scope/ScopeHeader';
 import { ScopeToolbar } from '../../scope/ScopeToolbar';
 import { ScopeSettings } from '../../scope/ScopeSettings';
+import { QuickSettings } from '../../scope/QuickSettings';
 import { ScopeStatusBar } from '../../scope/ScopeStatusBar';
 import { Measurements } from '../../scope/Measurements';
 import { ScopeView } from '../../scope/ScopeView';
@@ -24,12 +25,15 @@ export const MainLayout: React.FC = () => {
                 {/* Right Panels */}
                 <div className="flex flex-col w-64 shrink-0">
                     <Measurements />
-                    <ScopeSettings />
+                    <QuickSettings />
                 </div>
             </div>
 
             {/* 3. Bottom Status Bar */}
             <ScopeStatusBar />
+
+            {/* Settings modal (renders null when closed) */}
+            <ScopeSettings />
         </div>
     );
 };

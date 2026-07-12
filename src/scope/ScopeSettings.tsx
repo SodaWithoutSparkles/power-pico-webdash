@@ -1,9 +1,11 @@
-// Phase 5 — Right settings panel. Collapsible. Baud, avg k, window N,
-// channel checkboxes, vertical scale, horizontal zoom. Reads/writes config.
+// Phase 5 — Settings modal. A popup "window" with a category sidebar (left)
+// and the active category's content (right). Connection holds connection
+// settings; Display holds buffer + scale settings. Channels are controlled via
+// the left toolbar, so they're omitted here.
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useScopeStore } from "../store/scopeStore";
-import { Settings2, ChevronRight, ChevronLeft } from "lucide-react";
+import { Settings2, Plug, Monitor, X } from "lucide-react";
 
 function NumberField({
     label,
@@ -36,124 +38,173 @@ function NumberField({
     );
 }
 
+type CategoryId = "connection" | "display";
+
+const CATEGORIES: { id: CategoryId; label: string; icon: typeof Plug }[] = [
+    { id: "connection", label: "Connection", icon: Plug },
+    { id: "display", label: "Display", icon: Monitor },
+];
+
 export function ScopeSettings() {
-    const [collapsed, setCollapsed] = useState(false);
+    const settingsOpen = useScopeStore((s) => s.settingsOpen);
+    const toggleSettings = useScopeStore((s) => s.toggleSettings);
     const config = useScopeStore((s) => s.config);
     const setConfig = useScopeStore((s) => s.setConfig);
 
-    if (collapsed) {
-        return (
-            <div className="w-10 bg-gray-800 border-l border-gray-700 flex flex-col items-center py-2">
-                <button
-                    onClick={() => setCollapsed(false)}
-                    className="p-2 rounded text-gray-400 hover:bg-gray-700 hover:text-gray-200"
-                    title="Expand settings"
-                >
-                    <ChevronLeft size={18} />
-                </button>
-                <Settings2 size={18} className="text-gray-500 mt-2" />
-            </div>
-        );
-    }
+    const [active, setActive] = useState<CategoryId>("connection");
+
+    // Close on Escape.
+    useEffect(() => {
+        if (!settingsOpen) return;
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === "Escape") toggleSettings();
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, [settingsOpen, toggleSettings]);
+
+    if (!settingsOpen) return null;
 
     return (
-        <div className="w-64 bg-gray-800 border-l border-gray-700 flex flex-col text-gray-300 z-20">
-            <div className="bg-gray-900 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider flex items-center justify-between">
-                <span className="flex items-center gap-2">
-                    <Settings2 size={12} /> Settings
-                </span>
-                <button
-                    onClick={() => setCollapsed(true)}
-                    className="text-gray-400 hover:text-gray-200"
-                    title="Collapse"
-                >
-                    <ChevronRight size={16} />
-                </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-3 space-y-4">
-                <NumberField
-                    label="Baud rate"
-                    value={config.baudRate}
-                    min={1}
-                    step={100}
-                    onChange={(v) => setConfig({ baudRate: Math.round(v) })}
-                />
-
-                <div className="grid grid-cols-2 gap-3">
-                    <NumberField
-                        label="Avg k"
-                        value={config.avgSize}
-                        min={1}
-                        onChange={(v) => setConfig({ avgSize: Math.max(1, Math.round(v)) })}
-                    />
-                    <NumberField
-                        label="Window N"
-                        value={config.windowSize}
-                        min={1}
-                        onChange={(v) => setConfig({ windowSize: Math.max(1, Math.round(v)) })}
-                    />
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+            onClick={toggleSettings}
+        >
+            <div
+                className="w-[28rem] max-h-[80vh] bg-gray-800 border border-gray-700 rounded-lg shadow-2xl flex flex-col text-gray-300 overflow-hidden"
+                onClick={(e) => e.stopPropagation()}
+            >
+                <div className="bg-gray-900 px-4 py-2 text-sm font-semibold uppercase tracking-wider flex items-center justify-between">
+                    <span className="flex items-center gap-2">
+                        <Settings2 size={14} /> Settings
+                    </span>
+                    <button
+                        onClick={toggleSettings}
+                        className="text-gray-400 hover:text-gray-200"
+                        title="Close settings"
+                    >
+                        <X size={18} />
+                    </button>
                 </div>
 
-                <div>
-                    <span className="text-xs text-gray-400">Channels</span>
-                    <div className="mt-1 space-y-1">
-                        {(["v", "i", "w"] as const).map((k) => (
-                            <label key={k} className="flex items-center gap-2 text-sm capitalize">
-                                <input
-                                    type="checkbox"
-                                    checked={config.channels[k]}
-                                    onChange={(e) =>
-                                        setConfig({
-                                            channels: { ...config.channels, [k]: e.target.checked },
-                                        })
-                                    }
-                                    className="accent-cyan-500"
-                                />
-                                {k === "v" ? "Voltage" : k === "i" ? "Current" : "Power"}
-                            </label>
+                <div className="flex-1 flex overflow-hidden">
+                    {/* Category sidebar */}
+                    <nav className="w-28 shrink-0 bg-gray-900 border-r border-gray-700 p-2 space-y-1">
+                        {CATEGORIES.map(({ id, label, icon: Icon }) => (
+                            <button
+                                key={id}
+                                onClick={() => setActive(id)}
+                                className={`w-full flex flex-col items-center gap-1 py-2 rounded text-xs transition-colors ${active === id
+                                    ? "bg-gray-700 text-cyan-400"
+                                    : "text-gray-400 hover:bg-gray-800 hover:text-gray-200"
+                                    }`}
+                            >
+                                <Icon size={18} />
+                                {label}
+                            </button>
                         ))}
+                    </nav>
+
+                    {/* Category content */}
+                    <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                        {active === "connection" && (
+                            <NumberField
+                                label="Baud rate"
+                                value={config.baudRate}
+                                min={1}
+                                step={100}
+                                onChange={(v) => setConfig({ baudRate: Math.round(v) })}
+                            />
+                        )}
+
+                        {active === "display" && (
+                            <>
+                                <NumberField
+                                    label="Buffer N (samples)"
+                                    value={config.bufferSize}
+                                    min={1}
+                                    onChange={(v) =>
+                                        setConfig({ bufferSize: Math.max(1, Math.round(v)) })
+                                    }
+                                />
+
+                                <NumberField
+                                    label="Average k (packets)"
+                                    value={config.avgSize}
+                                    min={1}
+                                    onChange={(v) =>
+                                        setConfig({ avgSize: Math.max(1, Math.round(v)) })
+                                    }
+                                />
+
+                                <div>
+                                    <span className="text-xs text-gray-400">Vertical scale</span>
+                                    <label className="flex items-center gap-2 text-sm mt-1">
+                                        <input
+                                            type="checkbox"
+                                            checked={config.vScale.auto}
+                                            onChange={(e) =>
+                                                setConfig({
+                                                    vScale: { ...config.vScale, auto: e.target.checked },
+                                                })
+                                            }
+                                            className="accent-cyan-500"
+                                        />
+                                        Auto
+                                    </label>
+                                    {!config.vScale.auto && (
+                                        <div className="grid grid-cols-2 gap-3 mt-2">
+                                            <NumberField
+                                                label="Min"
+                                                value={config.vScale.min}
+                                                step={0.1}
+                                                onChange={(v) =>
+                                                    setConfig({ vScale: { ...config.vScale, min: v } })
+                                                }
+                                            />
+                                            <NumberField
+                                                label="Max"
+                                                value={config.vScale.max}
+                                                step={0.1}
+                                                onChange={(v) =>
+                                                    setConfig({ vScale: { ...config.vScale, max: v } })
+                                                }
+                                            />
+                                        </div>
+                                    )}
+                                </div>
+
+                                <NumberField
+                                    label="Horizontal zoom (s, 0 = fit buffer)"
+                                    value={config.hZoomSec}
+                                    min={0}
+                                    step={0.5}
+                                    onChange={(v) => setConfig({ hZoomSec: Math.max(0, v) })}
+                                />
+
+                                <label className="flex items-center gap-2 text-sm">
+                                    <input
+                                        type="checkbox"
+                                        checked={config.followLatest}
+                                        onChange={(e) =>
+                                            setConfig({ followLatest: e.target.checked })
+                                        }
+                                        className="accent-cyan-500"
+                                    />
+                                    Follow latest (scroll)
+                                </label>
+
+                                <NumberField
+                                    label="Vertical zoom (×, 1 = fit)"
+                                    value={config.vZoom}
+                                    min={1}
+                                    step={0.1}
+                                    onChange={(v) => setConfig({ vZoom: Math.max(1, v) })}
+                                />
+                            </>
+                        )}
                     </div>
                 </div>
-
-                <div>
-                    <span className="text-xs text-gray-400">Vertical scale</span>
-                    <label className="flex items-center gap-2 text-sm mt-1">
-                        <input
-                            type="checkbox"
-                            checked={config.vScale.auto}
-                            onChange={(e) =>
-                                setConfig({ vScale: { ...config.vScale, auto: e.target.checked } })
-                            }
-                            className="accent-cyan-500"
-                        />
-                        Auto
-                    </label>
-                    {!config.vScale.auto && (
-                        <div className="grid grid-cols-2 gap-3 mt-2">
-                            <NumberField
-                                label="Min"
-                                value={config.vScale.min}
-                                step={0.1}
-                                onChange={(v) => setConfig({ vScale: { ...config.vScale, min: v } })}
-                            />
-                            <NumberField
-                                label="Max"
-                                value={config.vScale.max}
-                                step={0.1}
-                                onChange={(v) => setConfig({ vScale: { ...config.vScale, max: v } })}
-                            />
-                        </div>
-                    )}
-                </div>
-
-                <NumberField
-                    label="Horizontal zoom (s, 0 = fit)"
-                    value={config.hZoomSec}
-                    min={0}
-                    step={0.5}
-                    onChange={(v) => setConfig({ hZoomSec: Math.max(0, v) })}
-                />
             </div>
         </div>
     );

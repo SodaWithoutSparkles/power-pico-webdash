@@ -21,11 +21,13 @@ const logIngest = createDebugThrottled("engine:ingest", 500);
 
 const DEFAULT_CONFIG: ScopeConfig = {
     baudRate: 115200,
-    avgSize: 10,
-    windowSize: 1000,
+    avgSize: 1,
+    bufferSize: 1000,
     channels: { v: true, i: true, w: true },
     vScale: { auto: true, min: 0, max: 0 },
     hZoomSec: 0,
+    vZoom: 1,
+    followLatest: true,
 };
 
 // Backward timestamp jump larger than this (us) = device reboot / counter wrap.
@@ -62,7 +64,7 @@ export class ScopeEngine {
 
     constructor() {
         this.avg = new AveragingBuffer(this.config.avgSize);
-        this.ring = new DisplayRingBuffer(this.config.windowSize);
+        this.ring = new DisplayRingBuffer(this.config.bufferSize);
     }
 
     onStatus(cb: StatusCallback): void {
@@ -82,9 +84,9 @@ export class ScopeEngine {
             this.config.avgSize = patch.avgSize;
             this.avg.resize(patch.avgSize);
         }
-        if (patch.windowSize !== undefined && patch.windowSize !== this.config.windowSize) {
-            this.config.windowSize = patch.windowSize;
-            this.ring.resize(patch.windowSize);
+        if (patch.bufferSize !== undefined && patch.bufferSize !== this.config.bufferSize) {
+            this.config.bufferSize = patch.bufferSize;
+            this.ring.resize(patch.bufferSize);
         }
         if (patch.channels !== undefined) this.config.channels = { ...patch.channels };
     }

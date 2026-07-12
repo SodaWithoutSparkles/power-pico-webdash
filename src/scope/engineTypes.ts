@@ -18,10 +18,12 @@ export interface VScale {
 export interface ScopeConfig {
     baudRate: number;
     avgSize: number; // k: packets in the averaging window
-    windowSize: number; // N: display ring capacity
+    bufferSize: number; // N: display ring capacity (buffer, not visual window)
     channels: ScopeChannels;
     vScale: VScale;
-    hZoomSec: number; // visible time window (seconds); 0 = fit all
+    hZoomSec: number; // visible time window (seconds); 0 = fit all buffer
+    vZoom: number; // vertical zoom factor (1 = auto-fit, >1 zooms in)
+    followLatest: boolean; // pin x-axis to the latest sample (scroll) vs free-pan
 }
 
 export type ScopeMode = "idle" | "serial" | "simulate";

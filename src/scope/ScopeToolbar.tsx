@@ -1,8 +1,8 @@
-// Phase 5 — Left toolbar. Channel visibility toggles + T+0 reset.
+// Phase 5 — Left toolbar. Channel visibility toggles + settings toggle.
 // ponytail: just buttons; no dropdown menus needed.
 
 import { useScopeStore } from "../store/scopeStore";
-import { Zap, Activity, Gauge, Clock } from "lucide-react";
+import { Zap, Activity, Gauge, Settings2 } from "lucide-react";
 
 const CHANNELS = [
     { key: "v" as const, label: "Voltage", icon: Zap, color: "text-cyan-400" },
@@ -13,7 +13,8 @@ const CHANNELS = [
 export function ScopeToolbar() {
     const channels = useScopeStore((s) => s.config.channels);
     const setConfig = useScopeStore((s) => s.setConfig);
-    const setTZero = useScopeStore((s) => s.setTZero);
+    const settingsOpen = useScopeStore((s) => s.settingsOpen);
+    const toggleSettings = useScopeStore((s) => s.toggleSettings);
 
     return (
         <div className="w-12 bg-gray-800 border-r border-gray-700 flex flex-col items-center py-2 space-y-1 z-20">
@@ -39,11 +40,13 @@ export function ScopeToolbar() {
             <div className="w-8 h-px bg-gray-600 my-2" />
 
             <button
-                onClick={setTZero}
-                className="p-2 rounded text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors"
-                title="Set current time as T=0"
+                onClick={toggleSettings}
+                className={`p-2 rounded transition-colors ${settingsOpen ? "bg-gray-700 text-cyan-400" : "text-gray-400 hover:bg-gray-700 hover:text-gray-200"
+                    }`}
+                title="Toggle settings panel"
+                aria-pressed={settingsOpen}
             >
-                <Clock size={20} />
+                <Settings2 size={20} />
             </button>
         </div>
     );

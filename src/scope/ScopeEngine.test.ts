@@ -61,7 +61,7 @@ test("Simulator: advances timestamp and produces packets", () => {
 
 test("ScopeEngine: averaging pipeline fills ring after k packets", () => {
     const e = new ScopeEngine();
-    e.setConfig({ avgSize: 2, windowSize: 10 });
+    e.setConfig({ avgSize: 2, bufferSize: 10 });
     e.start();
     e.pushPacket(pkt(0, 2, 1));
     e.pushPacket(pkt(1, 4, 1));
@@ -74,7 +74,7 @@ test("ScopeEngine: averaging pipeline fills ring after k packets", () => {
 
 test("ScopeEngine: T+0 offset shifts displayed x", () => {
     const e = new ScopeEngine();
-    e.setConfig({ avgSize: 1, windowSize: 10 });
+    e.setConfig({ avgSize: 1, bufferSize: 10 });
     e.setTZero(1000);
     e.start();
     e.pushPacket(pkt(1000, 5, 1));
@@ -85,7 +85,7 @@ test("ScopeEngine: T+0 offset shifts displayed x", () => {
 
 test("ScopeEngine: backward jump > 1s auto-shifts T+0", () => {
     const e = new ScopeEngine();
-    e.setConfig({ avgSize: 1, windowSize: 10 });
+    e.setConfig({ avgSize: 1, bufferSize: 10 });
     e.start();
     e.pushPacket(pkt(5_000_000, 5, 1));
     e.pushPacket(pkt(1000, 5, 1)); // jump back > 1s
@@ -97,7 +97,7 @@ test("ScopeEngine: backward jump > 1s auto-shifts T+0", () => {
 
 test("ScopeEngine: clear empties ring", () => {
     const e = new ScopeEngine();
-    e.setConfig({ avgSize: 1, windowSize: 10 });
+    e.setConfig({ avgSize: 1, bufferSize: 10 });
     e.start();
     e.pushPacket(pkt(0, 5, 1));
     e.clear();

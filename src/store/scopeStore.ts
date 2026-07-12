@@ -14,11 +14,13 @@ const engine = new ScopeEngine();
 
 const DEFAULT_CONFIG: ScopeConfig = {
     baudRate: 115200,
-    avgSize: 10,
-    windowSize: 1000,
+    avgSize: 1,
+    bufferSize: 1000,
     channels: { v: true, i: true, w: true },
     vScale: { auto: true, min: 0, max: 0 },
     hZoomSec: 0,
+    vZoom: 1,
+    followLatest: true,
 };
 
 // Throttle status → React to ~10 Hz so high pkt rates don't thrash renders.
@@ -72,6 +74,10 @@ export interface ScopeStoreState {
     region: RegionSelection | null;
     setRegion: (tStartUs: number, tEndUs: number) => void;
     clearRegion: () => void;
+
+    // settings panel visibility
+    settingsOpen: boolean;
+    toggleSettings: () => void;
 
     // notifications (engine errors + lifecycle toasts)
     notifications: ScopeNotification[];
@@ -162,6 +168,9 @@ export const useScopeStore = create<ScopeStoreState>((set, get) => {
             set({ region: { tStartUs, tEndUs, energyJ, chargeC } });
         },
         clearRegion: () => set({ region: null }),
+
+        settingsOpen: false,
+        toggleSettings: () => set((s) => ({ settingsOpen: !s.settingsOpen })),
 
         notifications: [],
         notify: (n) => {

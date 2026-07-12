@@ -3,7 +3,7 @@
 
 import { useScopeStore } from "../store/scopeStore";
 import { createDebug } from "../utils/debug";
-import { Play, Pause, Trash2, Plug, FlaskConical, Clock } from "lucide-react";
+import { Play, Pause, Trash2, Plug, FlaskConical } from "lucide-react";
 
 const log = createDebug("header");
 
@@ -15,7 +15,6 @@ export function ScopeHeader() {
     const start = useScopeStore((s) => s.start);
     const pause = useScopeStore((s) => s.pause);
     const clear = useScopeStore((s) => s.clear);
-    const setTZero = useScopeStore((s) => s.setTZero);
 
     const btn =
         "flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-colors";
@@ -70,14 +69,6 @@ export function ScopeHeader() {
                 title="Clear buffers and integrators"
             >
                 <Trash2 size={16} /> Clear
-            </button>
-
-            <button
-                className={`${btn} bg-gray-700 hover:bg-gray-600 text-gray-100`}
-                onClick={setTZero}
-                title="Set current time as T=0"
-            >
-                <Clock size={16} /> Set T=0
             </button>
 
             <div className="ml-auto text-xs text-gray-400 uppercase tracking-wider">
