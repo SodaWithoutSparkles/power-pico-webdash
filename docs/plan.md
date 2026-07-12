@@ -130,6 +130,17 @@ toolbar) for the scope. Main-thread engine (no Web Worker — overkill at
       `konva`, `clsx` (re-evaluate; uPlot doesn't need them; `clsx` may be
       useful for UI). Remove `tailwind-merge` if no complex class merging.
 
+### Phase 7 — Polish (User input required)
+14. Test on real device @115200 baud; verify live traces, session integrators,
+15. Themes (dark/light), responsive layout, and accessibility (ARIA labels, keyboard navigation, color contrast). Ensure the UI is intuitive and user-friendly.
+
+## Phase 8 — Docs
+15. Update README.md with quick start instructions, screenshots, and feature list.
+16. Proper documentation of the protocol, including packet structure, timestamp handling, and energy/charge calculations.
+
+## Phase 9 — i18n Support (deferred)
+17. Add i18n support, primarily for zh-CN, en-US locals. Use `react-i18next` or similar library to manage translations. Ensure all UI text is translatable and provide a mechanism for users to switch languages.
+
 ## Relevant files
 - `references/decode.py` — source of truth for protocol + scaling math.
 - `src/components/layout/MainLayout.tsx` — swap drawing components for scope.
