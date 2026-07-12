@@ -2,7 +2,10 @@
 // Reads/writes useScopeStore. No drawing-store coupling.
 
 import { useScopeStore } from "../store/scopeStore";
+import { createDebug } from "../utils/debug";
 import { Play, Pause, Trash2, Plug, FlaskConical, Clock } from "lucide-react";
+
+const log = createDebug("header");
 
 export function ScopeHeader() {
     const running = useScopeStore((s) => s.running);
@@ -50,7 +53,10 @@ export function ScopeHeader() {
             ) : (
                 <button
                     className={`${btn} bg-blue-600 hover:bg-blue-500 text-white`}
-                    onClick={start}
+                    onClick={() => {
+                        log("Start clicked, mode=%s running=%s", mode, running);
+                        start();
+                    }}
                     disabled={mode === "idle"}
                     title={mode === "idle" ? "Connect or Simulate first" : "Start ingestion"}
                 >

@@ -5,6 +5,9 @@
 import { create } from "zustand";
 import { ScopeEngine } from "../scope/ScopeEngine";
 import type { ScopeConfig, ScopeStatus } from "../scope/engineTypes";
+import { createDebug } from "../utils/debug";
+
+const log = createDebug("store");
 
 // ponytail: one engine for the whole app. No need for context/provider.
 const engine = new ScopeEngine();
@@ -136,13 +139,21 @@ export const useScopeStore = create<ScopeStoreState>((set, get) => {
         sessionChargeC: 0,
         tZeroOffsetUs: 0,
 
-        setTZero: () => engine.markTZero(),
-        resetTZero: () => engine.resetTZero(),
+        setTZero: () => {
+            log("setTZero() invoked");
+            engine.markTZero();
+            log("setTZero() done, tZeroOffsetUs=%s", get().tZeroOffsetUs);
+        },
+        resetTZero: () => {
+            log("resetTZero() invoked");
+            engine.resetTZero();
+        },
 
         resetSessionIntegrators: () => engine.resetSessionIntegrators(),
 
         region: null,
         setRegion: (tStartUs, tEndUs) => {
+            log("setRegion() invoked tStartUs=%s tEndUs=%s", tStartUs, tEndUs);
             const { energyJ, chargeC } = engine.computeRegion(tStartUs, tEndUs);
             set({ region: { tStartUs, tEndUs, energyJ, chargeC } });
         },
@@ -157,10 +168,13 @@ export const useScopeStore = create<ScopeStoreState>((set, get) => {
             set((s) => ({ notifications: s.notifications.filter((x) => x.id !== id) })),
 
         connect: async () => {
+            log("connect() invoked");
             try {
                 await engine.connect();
+                log("connect() ok, mode=%s", engine.getConfig() ? "serial" : "?");
                 get().notify({ type: "success", message: "Connected to serial port" });
             } catch (e) {
+                log("connect() failed: %s", e instanceof Error ? e.message : String(e));
                 get().notify({
                     type: "error",
                     title: "Connect failed",
@@ -169,18 +183,31 @@ export const useScopeStore = create<ScopeStoreState>((set, get) => {
             }
         },
         simulate: () => {
+            log("simulate() invoked");
             engine.simulate();
+            log("simulate() done, mode=%s", get().mode);
             get().notify({ type: "info", message: "Simulate mode ready — press Start" });
         },
-        start: () => engine.start(),
-        pause: () => engine.pause(),
+        start: () => {
+            log("start() invoked, mode=%s running=%s", get().mode, get().running);
+            engine.start();
+            log("start() returned, running=%s", get().running);
+        },
+        pause: () => {
+            log("pause() invoked, running=%s", get().running);
+            engine.pause();
+            log("pause() returned, running=%s", get().running);
+        },
         clear: () => {
+            log("clear() invoked");
             engine.clear();
             set({ region: null });
         },
         disconnect: async () => {
+            log("disconnect() invoked");
             await engine.disconnect();
             set({ region: null });
+            log("disconnect() returned, mode=%s", get().mode);
         },
 
         getEngine: () => engine,

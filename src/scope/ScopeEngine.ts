@@ -14,6 +14,10 @@ import type {
     ScopeStatus,
     StatusCallback,
 } from "./engineTypes";
+import { createDebug, createDebugThrottled } from "../utils/debug";
+
+const log = createDebug("engine");
+const logIngest = createDebugThrottled("engine:ingest", 500);
 
 const DEFAULT_CONFIG: ScopeConfig = {
     baudRate: 115200,
@@ -153,17 +157,23 @@ export class ScopeEngine {
 
     // --- Lifecycle --------------------------------------------------------
     start(): void {
+        log("start() mode=%s running=%s", this.mode, this.running);
         if (this.running) return;
         this.running = true;
         if (this.mode === "simulate" || this.mode === "idle") {
+            log("start() → startSimulate()");
             this.startSimulate();
         } else if (this.mode === "serial" && this.port) {
+            log("start() → startSerialRead()");
             this.startSerialRead();
+        } else {
+            log("start() WARNING: no source to start (mode=%s port=%s)", this.mode, !!this.port);
         }
         this.emitStatus();
     }
 
     pause(): void {
+        log("pause() running=%s", this.running);
         if (!this.running) return;
         this.running = false;
         this.stopSources();
@@ -186,6 +196,7 @@ export class ScopeEngine {
 
     // Enter simulate mode without starting ingestion (UI picks Start).
     simulate(): void {
+        log("simulate()");
         this.mode = "simulate";
         this.sim.reset();
         this.emitStatus();
@@ -273,6 +284,7 @@ export class ScopeEngine {
 
         // Discontinuity guard: backward jump > 1s shifts T+0 to stay continuous.
         if (this.lastRawTsUs !== 0 && pkt.timestampUs < this.lastRawTsUs - DISCONTINUITY_US) {
+            log("ingest() discontinuity: rawTs=%s lastRawTs=%s → shift tZero by %s", pkt.timestampUs, this.lastRawTsUs, this.lastRawTsUs - pkt.timestampUs);
             this.tZeroOffsetUs += this.lastRawTsUs - pkt.timestampUs;
         }
         this.lastRawTsUs = pkt.timestampUs;
@@ -281,6 +293,7 @@ export class ScopeEngine {
         if (!point) return;
 
         const displayT = point.t - this.tZeroOffsetUs;
+        logIngest("ingest() point t=%s displayT=%s v=%s i=%s w=%s ringLen=%s", pkt.timestampUs, displayT, point.v.toFixed(3), point.i.toFixed(3), point.w.toFixed(3), this.ring.length);
         this.ring.push({ t: displayT, v: point.v, i: point.i, w: point.w });
 
         // Session integrators: trapezoid over display-time deltas between

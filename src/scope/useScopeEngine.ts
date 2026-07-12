@@ -10,6 +10,10 @@ import uPlot from "uplot";
 import { useScopeStore } from "../store/scopeStore";
 import type { RegionSelection } from "../store/scopeStore";
 import type { ScopeConfig } from "./engineTypes";
+import { createDebug, createDebugThrottled } from "../utils/debug";
+
+const log = createDebug("render");
+const logLoop = createDebugThrottled("render:loop", 500);
 
 const CHANNEL_COLORS = {
     v: "#22d3ee", // cyan
@@ -163,6 +167,7 @@ export function useScopeEngine(
                         if (s.width < 2) return; // ignore tiny/click drags
                         const t0 = u.posToVal(s.left, "x");
                         const t1 = u.posToVal(s.left + s.width, "x");
+                        log("setSelect t0=%s t1=%s", t0, t1);
                         setRegion(t0, t1);
                     },
                 ],
@@ -190,6 +195,7 @@ export function useScopeEngine(
 
         const u = new uPlot(opts, [[0], [], [], []], el);
         uRef.current = u;
+        log("chart built channels=%s size=%dx%d", channelKey, u.bbox.width, u.bbox.height);
 
         // rAF loop: pull engine snapshot → setData. resetScales=false keeps zoom.
         const loop = () => {
@@ -199,6 +205,7 @@ export function useScopeEngine(
             if (channels.i) data.push(snap.i);
             if (channels.w) data.push(snap.w);
             u.setData(data, false);
+            logLoop("loop snapLen=%s xRange=[%s,%s] hZoomSec=%s", snap.t.length, u.scales.x.min, u.scales.x.max, useScopeStore.getState().config.hZoomSec);
 
             // Horizontal zoom: pin x window to [latest - hZoomSec, latest].
             // Only when user hasn't manually wheel-zoomed (x scale at auto).
