@@ -15,7 +15,7 @@ const engine = new ScopeEngine();
 const DEFAULT_CONFIG: ScopeConfig = {
     baudRate: 115200,
     avgSize: 1,
-    bufferSize: 1000,
+    bufferSize: 5000,
     channels: { v: true, i: true, w: true },
     vScale: { auto: true, min: 0, max: 0 },
     hZoomSec: 0,
