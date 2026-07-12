@@ -155,6 +155,35 @@ level as Settings** (new reusable `PopupPanel` component, fixed size ~0.75 ×
   which readouts appear). The measured `pkt/s` lives here minified for link
   health.
 
+## 10. Persistent log storage
+Sometimes we want to keep a record on disk for a long time (and survive a
+browser crash). Add a **persistent storage** option in settings.
+
+### Settings
+- **Persistent storage on/off** — master toggle.
+- **Sample window** — save 1 sample from a **X packets** average (sub-text shows the
+  equivalent per-second rate, derived from `pktPerSec`).
+- **Sample time unit** — `sec` / `min` / `hour` (granularity label for the log).
+- **Expected storage size** — displayed live, computed from the hard-coded
+  packet byte size × expected packets received (so the user can judge disk use
+  before enabling).
+- **Compression interval** — `0` = off; any other value = seconds between
+  compression passes.
+
+### Backend
+- **OPFS only** for now (single supported backend).
+- Future might add disk storage but need user confirmation -> extra step.
+
+### Write path
+- Logs are written to a **WAL per second**.
+- If compression is enabled, a second **compressed file store** is written **per  minute**. (Exact on-disk format is out of scope for now — define later.)
+
+### Actions & status
+- Buttons: **"Export log"** and **"Clear log"** (live in the Range operations
+  menu / settings).
+- Status bar shows **"log enabled"** when persistent storage is active.
+- On start, if we found a log, ask user if they want to **resume** or **clear** it. If resuming, the log is read and the graph is populated with the last `bufferSec` of data. 
+
 ---
 
 ## Implementation order (dependencies)
@@ -166,3 +195,5 @@ level as Settings** (new reusable `PopupPanel` component, fixed size ~0.75 ×
 4. Region stats (§4) + CSV export (§6).
 5. Unified detector (§8) + UI consolidation (§9).
 6. Visual window band (§7a) + W-off-by-default (§7b).
+7. Persistent log storage (§10) — depends on §1 data model + X-axis time base
+   (`pktPerSec` for the per-second WAL rate and expected-size math).
