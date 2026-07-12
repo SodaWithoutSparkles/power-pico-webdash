@@ -1,22 +1,19 @@
 import { useEffect } from 'react';
-import { useStore } from '../../store/useStore';
+import { useScopeStore } from '../../store/scopeStore';
 
+// Scope-native keyboard shortcuts. Kept for later UX expansion; wired to the
+// scope store so it stays build-clean after the drawing code was removed.
 export const KeyboardShortcuts = () => {
-    const undo = useStore((state) => state.undo);
-    const redo = useStore((state) => state.redo);
-    const cloneSelected = useStore((state) => state.cloneSelected);
-    const deleteSelected = useStore((state) => state.deleteSelected);
-    const moveSelectedLayer = useStore((state) => state.moveSelectedLayer);
-    const selectAllItems = useStore((state) => state.selectAllItems);
-    const selectedIds = useStore((state) => state.selectedIds);
-    const objects = useStore((state) => state.objects);
-    const setActiveTool = useStore((state) => state.setActiveTool);
-    const setDropperActive = useStore((state) => state.setDropperActive);
-    const keyboardShortcuts = useStore((state) => state.keyboardShortcuts);
+    const start = useScopeStore((s) => s.start);
+    const pause = useScopeStore((s) => s.pause);
+    const running = useScopeStore((s) => s.running);
+    const clearRegion = useScopeStore((s) => s.clearRegion);
+    const resetSessionIntegrators = useScopeStore((s) => s.resetSessionIntegrators);
+    const setTZero = useScopeStore((s) => s.setTZero);
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            // Ignore if typing in an input field
+            // Ignore when typing in a field.
             const target = e.target as HTMLElement;
             if (
                 target.tagName === 'INPUT' ||
@@ -26,84 +23,36 @@ export const KeyboardShortcuts = () => {
                 return;
             }
 
-            // Ctrl/Cmd + Z - Undo
-            if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+            // Esc — clear the drag-region selection.
+            if (e.key === 'Escape') {
+                clearRegion();
+                return;
+            }
+
+            // Space — start / pause (no modifier).
+            if (e.key === ' ' && !e.ctrlKey && !e.metaKey && !e.altKey) {
                 e.preventDefault();
-                undo();
+                if (running) pause();
+                else start();
                 return;
             }
 
-            // Ctrl/Cmd + Y or Ctrl/Cmd + Shift + Z - Redo
-            if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
-                e.preventDefault();
-                redo();
+            // R — reset session integrators.
+            if (e.key.toLowerCase() === 'r' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                resetSessionIntegrators();
                 return;
             }
 
-            // Ctrl/Cmd + D - Clone
-            if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
-                e.preventDefault();
-                cloneSelected();
+            // T — set T=0.
+            if (e.key.toLowerCase() === 't' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                setTZero();
                 return;
-            }
-
-            // Ctrl/Cmd + A - Select all (when there is already a selection)
-            if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
-                if (selectedIds.length > 0 && objects.length > 0) {
-                    e.preventDefault();
-                    selectAllItems();
-                }
-                return;
-            }
-
-            // Delete or Backspace - Delete selected
-            if (e.key === 'Delete' || e.key === 'Backspace') {
-                e.preventDefault();
-                deleteSelected();
-                return;
-            }
-
-            // [ - Move layer down
-            if (e.key === '[') {
-                e.preventDefault();
-                moveSelectedLayer('down');
-                return;
-            }
-
-            // ] - Move layer up
-            if (e.key === ']') {
-                e.preventDefault();
-                moveSelectedLayer('up');
-                return;
-            }
-
-            // Tool shortcuts (only when no modifier keys are pressed)
-            if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
-                const key = e.key.toLowerCase();
-                const toolByKey = new Map<string, Exclude<keyof typeof keyboardShortcuts.tools, 'dropper'>>(
-                    Object.entries(keyboardShortcuts.tools)
-                        .filter(([tool]) => tool !== 'dropper')
-                        .map(([tool, shortcut]) => [shortcut.toLowerCase(), tool as Exclude<keyof typeof keyboardShortcuts.tools, 'dropper'>])
-                );
-
-                const tool = toolByKey.get(key);
-                if (tool) {
-                    e.preventDefault();
-                    setActiveTool(tool);
-                    setDropperActive(false);
-                    return;
-                }
-
-                if (key === keyboardShortcuts.tools.dropper.toLowerCase()) {
-                    e.preventDefault();
-                    setDropperActive(true);
-                }
             }
         };
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [undo, redo, cloneSelected, deleteSelected, moveSelectedLayer, selectAllItems, selectedIds.length, objects.length, setActiveTool, setDropperActive, keyboardShortcuts]);
+    }, [start, pause, running, clearRegion, resetSessionIntegrators, setTZero]);
 
     return null;
 };

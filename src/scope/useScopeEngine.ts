@@ -100,11 +100,19 @@ export function useScopeEngine(
 
     const region = useScopeStore((s) => s.region);
     const setRegion = useScopeStore((s) => s.setRegion);
+    const vScale = useScopeStore((s) => s.config.vScale);
 
     // Keep latest region in a ref so the draw hook reads current value.
     useEffect(() => {
         regionRef.current = region;
     }, [region]);
+
+    // Apply vertical-scale changes live (no chart rebuild, keeps zoom).
+    useEffect(() => {
+        const u = uRef.current;
+        if (!u) return;
+        u.setScale("y", (vScale.auto ? { auto: true } : { min: vScale.min, max: vScale.max }) as unknown as { min: number; max: number });
+    }, [vScale]);
 
     // Init / rebuild the chart when the channel set changes.
     useEffect(() => {
