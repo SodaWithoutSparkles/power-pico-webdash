@@ -3,27 +3,25 @@
 // the two integrator tiers (session + drag-region). No drawing-store coupling.
 
 import { create } from "zustand";
-import { ScopeEngine } from "../scope/ScopeEngine";
-import type { ScopeConfig, ScopeStatus } from "../scope/engineTypes";
+import { ScopeEngine, DEFAULT_CONFIG } from "../scope/ScopeEngine";
+import { DEFAULT_DETECTOR_CONFIG } from "../scope/Detector";
+import type {
+    CurrentUnit,
+    ScopeConfig,
+    ScopeStatus,
+    UnitMode,
+    VoltageUnit,
+    YScale,
+    DetectorChannelConfig,
+    DetectorEvent,
+} from "../scope/engineTypes";
 import { createDebug } from "../utils/debug";
+import { unlockAudio, playDetectorBeep } from "../scope/audioAlert";
 
 const log = createDebug("store");
 
 // ponytail: one engine for the whole app. No need for context/provider.
 const engine = new ScopeEngine();
-
-const DEFAULT_CONFIG: ScopeConfig = {
-    baudRate: 115200,
-    avgSize: 1,
-    bufferSize: 5000,
-    channels: { v: true, i: true, w: true },
-    vScale: { auto: true, min: 0, max: 0 },
-    hZoomSec: 0,
-    vZoom: 1,
-    followLatest: true,
-};
-
-// Throttle status → React to ~10 Hz so high pkt rates don't thrash renders.
 const STATUS_THROTTLE_MS = 100;
 
 export type NotificationType = "info" | "success" | "warning" | "error";
@@ -42,12 +40,37 @@ export interface RegionSelection {
     tEndUs: number; // display-time (us) of drag end
     energyJ: number;
     chargeC: number;
+    vAvg: number | null;
+    vMin: number | null;
+    vMax: number | null;
+    iAvg: number | null;
+    iMin: number | null;
+    iMax: number | null;
+    wAvg: number | null;
+    wMin: number | null;
+    wMax: number | null;
 }
 
 export interface ScopeStoreState {
     // config
     config: ScopeConfig;
     setConfig: (patch: Partial<ScopeConfig>) => void;
+    setVZeroOffset: (offset: number) => void;
+    setIZeroOffset: (offset: number) => void;
+    setEnergyCamp: (camp: "joules" | "watt-hours") => void;
+    setBufferSec: (sec: number) => void;
+    setPktPerSec: (rate: number) => void;
+
+    // Phase 2: unit modes, fixed units, per-series Y scales, calibration
+    setVUnitMode: (mode: UnitMode) => void;
+    setIUnitMode: (mode: UnitMode) => void;
+    setVFixedUnit: (unit: VoltageUnit) => void;
+    setIFixedUnit: (unit: CurrentUnit) => void;
+    setVYScale: (scale: Partial<YScale>) => void;
+    setIYScale: (scale: Partial<YScale>) => void;
+    setWYScale: (scale: Partial<YScale>) => void;
+    setCalibrationTimeSec: (sec: number) => void;
+    calibrate: (channel: 'v' | 'i') => Promise<void>;
 
     // status (mirrored from engine, throttled)
     running: boolean;
@@ -94,6 +117,15 @@ export interface ScopeStoreState {
 
     // engine access for the render loop (snapshot)
     getEngine: () => ScopeEngine;
+
+    // detector (threshold crossing + peak detection)
+    detectorEvents: DetectorEvent[];
+    detectorVConfig: DetectorChannelConfig;
+    detectorIConfig: DetectorChannelConfig;
+    setDetectorConfig: (channel: 'v' | 'i', config: Partial<DetectorChannelConfig>) => void;
+    getDetectorEvents: () => DetectorEvent[];
+    clearDetectorEvents: () => void;
+    syncDetectorEvents: () => void;
 }
 
 let lastStatusPush = 0;
@@ -127,6 +159,27 @@ export const useScopeStore = create<ScopeStoreState>((set, get) => {
         get().notify({ type: "error", title: "Scope error", message: e.message });
     });
 
+    // Throttle detector notifications: at most one per channel per second
+    const detectorLastNotify: Record<string, number> = {};
+
+    engine.onDetectorEvent((event) => {
+        playDetectorBeep(event.channel);
+        get().syncDetectorEvents();
+
+        const now = Date.now();
+        const key = event.channel;
+        if (!detectorLastNotify[key] || now - detectorLastNotify[key] > 1000) {
+            detectorLastNotify[key] = now;
+            const dir = event.direction === 'rising' ? '↑' : '↓';
+            get().notify({
+                type: 'warning',
+                title: `Detector: ${event.channel.toUpperCase()}`,
+                message: `${dir} ${event.value.toFixed(4)} crossed threshold ${event.threshold.toFixed(3)}`,
+                timeout: 3000,
+            });
+        }
+    });
+
     return {
         config: { ...DEFAULT_CONFIG },
 
@@ -134,6 +187,74 @@ export const useScopeStore = create<ScopeStoreState>((set, get) => {
             const next = { ...get().config, ...patch };
             engine.setConfig(patch);
             set({ config: next });
+        },
+
+        setVZeroOffset: (offset) => {
+            engine.setConfig({ vZeroOffsetV: offset });
+            set({ config: { ...get().config, vZeroOffsetV: offset } });
+        },
+        setIZeroOffset: (offset) => {
+            engine.setConfig({ iZeroOffsetA: offset });
+            set({ config: { ...get().config, iZeroOffsetA: offset } });
+        },
+        setEnergyCamp: (camp) => {
+            engine.setConfig({ energyCamp: camp });
+            set({ config: { ...get().config, energyCamp: camp } });
+        },
+        setBufferSec: (sec) => {
+            engine.setConfig({ bufferSec: sec });
+            set({ config: { ...get().config, bufferSec: sec } });
+        },
+        setPktPerSec: (rate) => {
+            engine.setConfig({ pktPerSec: rate });
+            set({ config: { ...get().config, pktPerSec: rate } });
+        },
+
+        setVUnitMode: (mode) => {
+            engine.setConfig({ vUnitMode: mode });
+            set({ config: { ...get().config, vUnitMode: mode } });
+        },
+        setIUnitMode: (mode) => {
+            engine.setConfig({ iUnitMode: mode });
+            set({ config: { ...get().config, iUnitMode: mode } });
+        },
+        setVFixedUnit: (unit) => {
+            engine.setConfig({ vFixedUnit: unit });
+            set({ config: { ...get().config, vFixedUnit: unit } });
+        },
+        setIFixedUnit: (unit) => {
+            engine.setConfig({ iFixedUnit: unit });
+            set({ config: { ...get().config, iFixedUnit: unit } });
+        },
+        setVYScale: (scale) => {
+            const next = { ...get().config.vYScale, ...scale };
+            engine.setConfig({ vYScale: next });
+            set({ config: { ...get().config, vYScale: next } });
+        },
+        setIYScale: (scale) => {
+            const next = { ...get().config.iYScale, ...scale };
+            engine.setConfig({ iYScale: next });
+            set({ config: { ...get().config, iYScale: next } });
+        },
+        setWYScale: (scale) => {
+            const next = { ...get().config.wYScale, ...scale };
+            engine.setConfig({ wYScale: next });
+            set({ config: { ...get().config, wYScale: next } });
+        },
+        setCalibrationTimeSec: (sec) => {
+            engine.setConfig({ calibrationTimeSec: sec });
+            set({ config: { ...get().config, calibrationTimeSec: sec } });
+        },
+        calibrate: async (channel) => {
+            const mean = await engine.calibrate(channel);
+            if (channel === 'v') {
+                engine.setConfig({ vZeroOffsetV: mean });
+                set({ config: { ...get().config, vZeroOffsetV: mean } });
+            } else {
+                engine.setConfig({ iZeroOffsetA: mean });
+                set({ config: { ...get().config, iZeroOffsetA: mean } });
+            }
+            get().notify({ type: 'success', message: `${channel.toUpperCase()} calibrated: offset=${mean.toFixed(6)}` });
         },
 
         running: false,
@@ -164,8 +285,8 @@ export const useScopeStore = create<ScopeStoreState>((set, get) => {
         region: null,
         setRegion: (tStartUs, tEndUs) => {
             log("setRegion() invoked tStartUs=%s tEndUs=%s", tStartUs, tEndUs);
-            const { energyJ, chargeC } = engine.computeRegion(tStartUs, tEndUs);
-            set({ region: { tStartUs, tEndUs, energyJ, chargeC } });
+            const stats = engine.computeRegion(tStartUs, tEndUs);
+            set({ region: { tStartUs, tEndUs, ...stats } });
         },
         clearRegion: () => set({ region: null }),
 
@@ -184,6 +305,7 @@ export const useScopeStore = create<ScopeStoreState>((set, get) => {
             log("connect() invoked");
             try {
                 await engine.connect();
+                unlockAudio();
                 log("connect() ok, mode=%s", engine.getConfig() ? "serial" : "?");
                 get().notify({ type: "success", message: "Connected to serial port" });
             } catch (e) {
@@ -204,6 +326,7 @@ export const useScopeStore = create<ScopeStoreState>((set, get) => {
         start: () => {
             log("start() invoked, mode=%s running=%s", get().mode, get().running);
             engine.start();
+            unlockAudio();
             log("start() returned, running=%s", get().running);
         },
         pause: () => {
@@ -224,5 +347,30 @@ export const useScopeStore = create<ScopeStoreState>((set, get) => {
         },
 
         getEngine: () => engine,
+
+        detectorEvents: [],
+        detectorVConfig: { ...DEFAULT_DETECTOR_CONFIG.v },
+        detectorIConfig: { ...DEFAULT_DETECTOR_CONFIG.i },
+
+        setDetectorConfig: (channel, config) => {
+            engine.setDetectorConfig(channel, config);
+            // ponytail: store in separate state field
+            set((s) => {
+                const vc = { ...s.detectorVConfig, ...(channel === 'v' ? config : {}) };
+                const ic = { ...s.detectorIConfig, ...(channel === 'i' ? config : {}) };
+                return { detectorVConfig: vc, detectorIConfig: ic };
+            });
+        },
+
+        getDetectorEvents: () => engine.getDetectorEvents(),
+
+        clearDetectorEvents: () => {
+            engine.clearDetectorEvents();
+            set({ detectorEvents: [] });
+        },
+
+        syncDetectorEvents: () => {
+            set({ detectorEvents: engine.getDetectorEvents() });
+        },
     };
 });

@@ -7,11 +7,11 @@ import { AveragingBuffer } from "./AveragingBuffer.ts";
 import { Simulator } from "./simulate.ts";
 import { decodePacket, type DecodedPacket } from "./decode.ts";
 
-function pkt(tsUs: number, volts: number, amps: number): DecodedPacket {
+function pkt(tsUs: number, volts: number, amps: number, range = 1): DecodedPacket {
     return {
         timestampUs: tsUs,
         dataCount: 1,
-        samples: [{ range: 1, volAdc: 0, curAdc: 0, refAdc: 0, volts, amps }],
+        samples: [{ range, volAdc: 0, curAdc: 0, refAdc: 0, volts, amps }],
     };
 }
 
@@ -34,10 +34,10 @@ test("AveragingBuffer: slides window (FIFO)", () => {
 
 test("DisplayRingBuffer: scrolling overwrite + chronological snapshot", () => {
     const ring = new DisplayRingBuffer(3);
-    ring.push({ t: 1, v: 1, i: 0, w: 0 });
-    ring.push({ t: 2, v: 2, i: 0, w: 0 });
-    ring.push({ t: 3, v: 3, i: 0, w: 0 });
-    ring.push({ t: 4, v: 4, i: 0, w: 0 }); // overwrites t=1
+    ring.push({ t: 1, v: 1, i: 0, w: 0, range: 0 });
+    ring.push({ t: 2, v: 2, i: 0, w: 0, range: 0 });
+    ring.push({ t: 3, v: 3, i: 0, w: 0, range: 0 });
+    ring.push({ t: 4, v: 4, i: 0, w: 0, range: 0 }); // overwrites t=1
     const s = ring.snapshot();
     assert.deepEqual(Array.from(s.t), [2, 3, 4]);
     assert.equal(ring.fillPct, 1);
@@ -45,10 +45,11 @@ test("DisplayRingBuffer: scrolling overwrite + chronological snapshot", () => {
 
 test("DisplayRingBuffer: resize preserves recent points", () => {
     const ring = new DisplayRingBuffer(5);
-    for (let k = 0; k < 5; k++) ring.push({ t: k, v: k, i: 0, w: 0 });
+    for (let k = 0; k < 5; k++) ring.push({ t: k, v: k, i: 0, w: 0, range: k + 1 });
     ring.resize(3);
     const s = ring.snapshot();
     assert.deepEqual(Array.from(s.t), [2, 3, 4]);
+    assert.deepEqual(Array.from(s.range), [3, 4, 5]);
 });
 
 test("Simulator: advances timestamp and produces packets", () => {
@@ -61,7 +62,7 @@ test("Simulator: advances timestamp and produces packets", () => {
 
 test("ScopeEngine: averaging pipeline fills ring after k packets", () => {
     const e = new ScopeEngine();
-    e.setConfig({ avgSize: 2, bufferSize: 10 });
+    e.setConfig({ avgSize: 2, pktPerSec: 10, bufferSec: 1 });
     e.start();
     e.pushPacket(pkt(0, 2, 1));
     e.pushPacket(pkt(1, 4, 1));
@@ -74,7 +75,7 @@ test("ScopeEngine: averaging pipeline fills ring after k packets", () => {
 
 test("ScopeEngine: T+0 offset shifts displayed x", () => {
     const e = new ScopeEngine();
-    e.setConfig({ avgSize: 1, bufferSize: 10 });
+    e.setConfig({ avgSize: 1, pktPerSec: 10, bufferSec: 1 });
     e.setTZero(1000);
     e.start();
     e.pushPacket(pkt(1000, 5, 1));
@@ -85,7 +86,7 @@ test("ScopeEngine: T+0 offset shifts displayed x", () => {
 
 test("ScopeEngine: backward jump > 1s auto-shifts T+0", () => {
     const e = new ScopeEngine();
-    e.setConfig({ avgSize: 1, bufferSize: 10 });
+    e.setConfig({ avgSize: 1, pktPerSec: 10, bufferSec: 1 });
     e.start();
     e.pushPacket(pkt(5_000_000, 5, 1));
     e.pushPacket(pkt(1000, 5, 1)); // jump back > 1s
@@ -97,11 +98,47 @@ test("ScopeEngine: backward jump > 1s auto-shifts T+0", () => {
 
 test("ScopeEngine: clear empties ring", () => {
     const e = new ScopeEngine();
-    e.setConfig({ avgSize: 1, bufferSize: 10 });
+    e.setConfig({ avgSize: 1, pktPerSec: 10, bufferSec: 1 });
     e.start();
     e.pushPacket(pkt(0, 5, 1));
     e.clear();
     assert.equal(e.snapshot().t.length, 0);
+    e.pause();
+});
+
+test("ScopeEngine: software zero subtracts offsets from v/i and recomputes w", () => {
+    const e = new ScopeEngine();
+    e.setConfig({ avgSize: 1, pktPerSec: 10, bufferSec: 1, vZeroOffsetV: 1, iZeroOffsetA: 0.5 });
+    e.start();
+    e.pushPacket(pkt(0, 5, 2));
+    const s = e.snapshot();
+    assert.equal(s.v[0], 4); // 5 - 1
+    assert.equal(s.i[0], 1.5); // 2 - 0.5
+    assert.equal(s.w[0], 6); // 4 * 1.5 (recomputed with zeroed values)
+    e.pause();
+});
+
+test("ScopeEngine: range propagates through averaging buffer to ring", () => {
+    const e = new ScopeEngine();
+    e.setConfig({ avgSize: 1, pktPerSec: 10, bufferSec: 1 });
+    e.start();
+    e.pushPacket({ timestampUs: 0, dataCount: 1, samples: [{ range: 2, volAdc: 0, curAdc: 0, refAdc: 0, volts: 1, amps: 1 }] });
+    e.pushPacket({ timestampUs: 1, dataCount: 1, samples: [{ range: 3, volAdc: 0, curAdc: 0, refAdc: 0, volts: 1, amps: 1 }] });
+    const s = e.snapshot();
+    assert.deepEqual(Array.from(s.range), [2, 3]);
+    e.pause();
+});
+
+test("ScopeEngine: range winner rule with avgSize > 1 (latest range wins)", () => {
+    const e = new ScopeEngine();
+    e.setConfig({ avgSize: 3, pktPerSec: 10, bufferSec: 1 });
+    e.start();
+    e.pushPacket(pkt(0, 1, 1, 1));
+    e.pushPacket(pkt(1, 1, 1, 2));
+    e.pushPacket(pkt(2, 1, 1, 3));
+    const s = e.snapshot();
+    assert.equal(s.t.length, 1); // window full after 3 packets
+    assert.equal(s.range[0], 3); // latest packet's range wins
     e.pause();
 });
 

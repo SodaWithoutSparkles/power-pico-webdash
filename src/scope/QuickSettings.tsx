@@ -10,7 +10,6 @@ export function QuickSettings() {
     const setConfig = useScopeStore((s) => s.setConfig);
 
     const hZoom = config.hZoomSec;
-    const vZoom = config.vZoom;
 
     return (
         <div className="bg-gray-800 border-l border-gray-700 text-gray-300">
@@ -51,43 +50,6 @@ export function QuickSettings() {
                             title="Zoom in (narrower window)"
                             onClick={() =>
                                 setConfig({ hZoomSec: Math.min(60, +(hZoom + 1).toFixed(1)) })
-                            }
-                        >
-                            <ZoomIn size={14} />
-                        </button>
-                    </div>
-                </div>
-
-                {/* Vertical zoom */}
-                <div>
-                    <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
-                        <span>Vertical zoom</span>
-                        <span className="font-mono text-gray-200">{vZoom.toFixed(1)}×</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <button
-                            className="p-1.5 rounded bg-gray-700 hover:bg-gray-600 text-gray-200"
-                            title="Zoom out"
-                            onClick={() =>
-                                setConfig({ vZoom: Math.max(1, +(vZoom - 0.25).toFixed(2)) })
-                            }
-                        >
-                            <ZoomOut size={14} />
-                        </button>
-                        <input
-                            type="range"
-                            min={1}
-                            max={10}
-                            step={0.25}
-                            value={vZoom}
-                            onChange={(e) => setConfig({ vZoom: parseFloat(e.target.value) })}
-                            className="flex-1 accent-cyan-500"
-                        />
-                        <button
-                            className="p-1.5 rounded bg-gray-700 hover:bg-gray-600 text-gray-200"
-                            title="Zoom in"
-                            onClick={() =>
-                                setConfig({ vZoom: Math.min(10, +(vZoom + 0.25).toFixed(2)) })
                             }
                         >
                             <ZoomIn size={14} />

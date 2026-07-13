@@ -36,8 +36,12 @@ export class AveragingBuffer {
         const v = n > 0 ? sumV / n : 0;
         const i = n > 0 ? sumI / n : 0;
         const w = v * i;
-        const t = this.packets[this.packets.length - 1].timestampUs;
-        return { t, v, i, w };
+        const lastPkt = this.packets[this.packets.length - 1];
+        const t = lastPkt.timestampUs;
+        // Winner rule: latest sample's range wins (last sample of last packet).
+        const lastSamples = lastPkt.samples;
+        const range = lastSamples.length > 0 ? lastSamples[lastSamples.length - 1].range : 0;
+        return { t, v, i, w, range };
     }
 
     clear(): void {

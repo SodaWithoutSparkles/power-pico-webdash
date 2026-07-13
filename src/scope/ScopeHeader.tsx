@@ -1,9 +1,10 @@
-// Phase 5 — Scope header. Connect / Simulate / Start / Pause / Clear / T+0.
-// Reads/writes useScopeStore. No drawing-store coupling.
+// Phase 5 — Scope header. Connect / Start / Pause. Simulate and Clear were
+// moved out: Simulate removed, Clear relocated to the left toolbar (ScopeToolbar)
+// and also available via the Range operations menu in ScopeView.
 
 import { useScopeStore } from "../store/scopeStore";
 import { createDebug } from "../utils/debug";
-import { Play, Pause, Trash2, Plug, FlaskConical } from "lucide-react";
+import { Play, Pause, Plug } from "lucide-react";
 
 const log = createDebug("header");
 
@@ -11,10 +12,8 @@ export function ScopeHeader() {
     const running = useScopeStore((s) => s.running);
     const mode = useScopeStore((s) => s.mode);
     const connect = useScopeStore((s) => s.connect);
-    const simulate = useScopeStore((s) => s.simulate);
     const start = useScopeStore((s) => s.start);
     const pause = useScopeStore((s) => s.pause);
-    const clear = useScopeStore((s) => s.clear);
 
     const btn =
         "flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-colors";
@@ -29,14 +28,6 @@ export function ScopeHeader() {
                 title="Connect to a serial port (Web Serial)"
             >
                 <Plug size={16} /> Connect
-            </button>
-
-            <button
-                className={`${btn} bg-violet-600 hover:bg-violet-500 text-white`}
-                onClick={simulate}
-                title="Generate synthetic data (no hardware)"
-            >
-                <FlaskConical size={16} /> Simulate
             </button>
 
             <div className="w-px h-6 bg-gray-600 mx-1" />
@@ -57,19 +48,11 @@ export function ScopeHeader() {
                         start();
                     }}
                     disabled={mode === "idle"}
-                    title={mode === "idle" ? "Connect or Simulate first" : "Start ingestion"}
+                    title={mode === "idle" ? "Connect first" : "Start ingestion"}
                 >
                     <Play size={16} /> Start
                 </button>
             )}
-
-            <button
-                className={`${btn} bg-gray-700 hover:bg-gray-600 text-gray-100`}
-                onClick={clear}
-                title="Clear buffers and integrators"
-            >
-                <Trash2 size={16} /> Clear
-            </button>
 
             <div className="ml-auto text-xs text-gray-400 uppercase tracking-wider">
                 {mode === "idle" ? "No source" : mode}

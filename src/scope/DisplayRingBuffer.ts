@@ -9,6 +9,7 @@ export class DisplayRingBuffer {
     private v: Float64Array;
     private i: Float64Array;
     private w: Float64Array;
+    private range: Float64Array;
     private head = 0; // next write slot
     private count = 0;
 
@@ -18,6 +19,7 @@ export class DisplayRingBuffer {
         this.v = new Float64Array(capacity);
         this.i = new Float64Array(capacity);
         this.w = new Float64Array(capacity);
+        this.range = new Float64Array(capacity);
     }
 
     capacity: number;
@@ -27,6 +29,7 @@ export class DisplayRingBuffer {
         this.v[this.head] = p.v;
         this.i[this.head] = p.i;
         this.w[this.head] = p.w;
+        this.range[this.head] = p.range;
         this.head = (this.head + 1) % this.capacity;
         if (this.count < this.capacity) this.count++;
     }
@@ -44,6 +47,7 @@ export class DisplayRingBuffer {
         const v = new Float64Array(this.count);
         const i = new Float64Array(this.count);
         const w = new Float64Array(this.count);
+        const range = new Float64Array(this.count);
         const start = (this.head - this.count + this.capacity) % this.capacity;
         for (let k = 0; k < this.count; k++) {
             const idx = (start + k) % this.capacity;
@@ -51,8 +55,9 @@ export class DisplayRingBuffer {
             v[k] = this.v[idx];
             i[k] = this.i[idx];
             w[k] = this.w[idx];
+            range[k] = this.range[idx];
         }
-        return { t, v, i, w };
+        return { t, v, i, w, range };
     }
 
     clear(): void {
@@ -69,12 +74,13 @@ export class DisplayRingBuffer {
         this.v = new Float64Array(capacity);
         this.i = new Float64Array(capacity);
         this.w = new Float64Array(capacity);
+        this.range = new Float64Array(capacity);
         this.head = 0;
         this.count = 0;
         const keep = Math.min(snap.t.length, capacity);
         const start = snap.t.length - keep; // keep the most recent points
         for (let k = 0; k < keep; k++) {
-            this.push({ t: snap.t[start + k], v: snap.v[start + k], i: snap.i[start + k], w: snap.w[start + k] });
+            this.push({ t: snap.t[start + k], v: snap.v[start + k], i: snap.i[start + k], w: snap.w[start + k], range: snap.range[start + k] });
         }
     }
 }

@@ -1,8 +1,8 @@
-// Phase 5 — Left toolbar. Channel visibility toggles + settings toggle.
+// Phase 5 — Left toolbar. Channel visibility toggles + settings toggle + clear.
 // ponytail: just buttons; no dropdown menus needed.
 
 import { useScopeStore } from "../store/scopeStore";
-import { Zap, Activity, Gauge, Settings2 } from "lucide-react";
+import { Zap, Activity, Gauge, Settings2, Trash2 } from "lucide-react";
 
 const CHANNELS = [
     { key: "v" as const, label: "Voltage", icon: Zap, color: "text-cyan-400" },
@@ -15,6 +15,8 @@ export function ScopeToolbar() {
     const setConfig = useScopeStore((s) => s.setConfig);
     const settingsOpen = useScopeStore((s) => s.settingsOpen);
     const toggleSettings = useScopeStore((s) => s.toggleSettings);
+    const clear = useScopeStore((s) => s.clear);
+    const clearRegion = useScopeStore((s) => s.clearRegion);
 
     return (
         <div className="w-12 bg-gray-800 border-r border-gray-700 flex flex-col items-center py-2 space-y-1 z-20">
@@ -47,6 +49,19 @@ export function ScopeToolbar() {
                 aria-pressed={settingsOpen}
             >
                 <Settings2 size={20} />
+            </button>
+
+            <div className="w-8 h-px bg-gray-600 my-2" />
+
+            <button
+                onClick={() => {
+                    clear();
+                    clearRegion();
+                }}
+                className="p-2 rounded transition-colors text-gray-400 hover:bg-gray-700 hover:text-gray-200"
+                title="Clear buffers and integrators"
+            >
+                <Trash2 size={20} />
             </button>
         </div>
     );

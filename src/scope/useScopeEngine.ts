@@ -9,11 +9,14 @@ import { useEffect, useRef, type RefObject } from "react";
 import uPlot from "uplot";
 import { useScopeStore } from "../store/scopeStore";
 import type { RegionSelection } from "../store/scopeStore";
-import type { ScopeConfig } from "./engineTypes";
+import type { ScopeConfig, YScale } from "./engineTypes";
 import { createDebug, createDebugThrottled } from "../utils/debug";
 
 const log = createDebug("render");
 const logLoop = createDebugThrottled("render:loop", 500);
+
+// Out-of-range notification tracking per channel (at most one active at a time).
+const ooActive: Record<string, boolean> = { v: false, i: false, w: false };
 
 const CHANNEL_COLORS = {
     v: "#22d3ee", // cyan
@@ -36,12 +39,65 @@ const REGION_STROKE = "rgba(34,197,94,0.6)";
 function buildSeries(channels: ScopeConfig["channels"]): uPlot.Series[] {
     const series: uPlot.Series[] = [{ label: "t (s)" }];
     if (channels.v)
-        series.push({ label: CHANNEL_LABELS.v, stroke: CHANNEL_COLORS.v, width: 2, points: { show: false } });
+        series.push({ label: CHANNEL_LABELS.v, scale: "yV", stroke: CHANNEL_COLORS.v, width: 2, points: { show: false }, show: false });
     if (channels.i)
-        series.push({ label: CHANNEL_LABELS.i, stroke: CHANNEL_COLORS.i, width: 2, points: { show: false } });
+        series.push({ label: CHANNEL_LABELS.i, scale: "yI", stroke: CHANNEL_COLORS.i, width: 2, points: { show: false }, show: false });
     if (channels.w)
-        series.push({ label: CHANNEL_LABELS.w, stroke: CHANNEL_COLORS.w, width: 2, points: { show: false } });
+        series.push({ label: CHANNEL_LABELS.w, scale: "yW", stroke: CHANNEL_COLORS.w, width: 2, points: { show: false }, show: false });
     return series;
+}
+
+// Build uPlot scales: one named Y scale per enabled channel.
+function buildScales(channels: ScopeConfig["channels"]): uPlot.Scales {
+    const scales: uPlot.Scales = { x: { time: false } };
+    if (channels.v) scales.yV = { auto: true };
+    if (channels.i) scales.yI = { auto: true };
+    if (channels.w) scales.yW = { auto: true };
+    return scales;
+}
+
+// Build uPlot axes: x at index 0, then one axis per enabled Y scale.
+function buildAxes(channels: ScopeConfig["channels"]): uPlot.Axis[] {
+    const axes: uPlot.Axis[] = [
+        {
+            values: xAxisValues,
+            label: "Time (s)",
+            stroke: AXIS,
+            grid: { stroke: GRID },
+            ticks: { stroke: GRID },
+        },
+    ];
+    if (channels.v) {
+        axes.push({
+            scale: "yV",
+            side: 1,
+            label: CHANNEL_LABELS.v,
+            stroke: CHANNEL_COLORS.v,
+            grid: { stroke: GRID, show: false },
+            ticks: { stroke: CHANNEL_COLORS.v },
+        });
+    }
+    if (channels.i) {
+        axes.push({
+            scale: "yI",
+            side: 3,
+            label: CHANNEL_LABELS.i,
+            stroke: CHANNEL_COLORS.i,
+            grid: { stroke: GRID, show: false },
+            ticks: { stroke: CHANNEL_COLORS.i },
+        });
+    }
+    if (channels.w) {
+        axes.push({
+            scale: "yW",
+            side: 3,
+            label: CHANNEL_LABELS.w,
+            stroke: CHANNEL_COLORS.w,
+            grid: { stroke: GRID, show: false },
+            ticks: { stroke: CHANNEL_COLORS.w },
+        });
+    }
+    return axes;
 }
 
 // x values are display-time in microseconds; show elapsed seconds from T+0.
@@ -88,7 +144,6 @@ function tooltipPlugin(): uPlot.Plugin {
                     let html = `<div style="color:#9ca3af">t = ${((tVal as number) / 1_000_000).toFixed(3)} s</div>`;
                     for (let s = 1; s < u.series.length; s++) {
                         const series = u.series[s];
-                        if (series.show === false) continue;
                         const val = u.data[s][idx];
                         if (val == null) continue;
                         const color = String(series.stroke ?? "#fff");
@@ -113,13 +168,19 @@ function tooltipPlugin(): uPlot.Plugin {
     };
 }
 
-// Wheel = zoom x (time axis) about the cursor.
-// Shift+wheel = pan x.
-// Drag on the Y-axis gutter = pan the vertical offset.
+// Wheel = zoom x (time axis) about the cursor (paused) or newest data (running).
+// Shift+wheel = faster zoom (factor 0.7 instead of 0.9).
+// Drag on the Y-axis gutter = pan yV (primary voltage axis only).
 // uPlot has no built-in wheel zoom or axis-drag pan, so both are custom.
 //
 // X and Y interaction flags are kept separate so Y gutter drag never
 // disables X auto-follow (the rAF loop uses each independently).
+//
+// Per-scale Y handling (ponytail: simple win):
+//   - Left gutter (clientX < overRect.left): zoom/drag yV
+//   - Right gutter (clientX > overRect.right): wheel-zoom yI and yW together
+//   - Y gutter drag (mousedown): yV only
+//   - Double-click: reset all Y scales independently using each series.scale
 function wheelZoomPlugin(
     factor = 0.9,
     xPanRef?: { current: boolean },
@@ -138,80 +199,104 @@ function wheelZoomPlugin(
                     let startMin = 0;
                     let startMax = 0;
 
+                    // Collect the right-side scale keys (yI, yW if they exist).
+                    const rightScales: string[] = [];
+                    if (u.scales.yI) rightScales.push("yI");
+                    if (u.scales.yW) rightScales.push("yW");
+
+                    const zoomScale = (scaleKey: string, overRect: DOMRect, e: WheelEvent) => {
+                        const sy = (u.scales as Record<string, uPlot.Scale>)[scaleKey];
+                        if (!sy || sy.min == null || sy.max == null) return;
+                        const top = e.clientY - overRect.top;
+                        const anchor = u.posToVal(top, scaleKey);
+                        const oyRange = (sy.max as number) - (sy.min as number);
+                        const nyRange = e.deltaY < 0 ? oyRange * factor : oyRange / factor;
+                        const topPct = top / overRect.height;
+                        const nyMin = anchor - topPct * nyRange;
+                        const nyMax = nyMin + nyRange;
+                        u.setScale(scaleKey, { min: nyMin, max: nyMax });
+                    };
+
                     const onWheel = (e: WheelEvent) => {
                         e.preventDefault();
                         if (!u.over) return;
 
-                        // Shift+wheel → pan x-axis (permanent decouple).
-                        if (e.shiftKey) {
-                            const sx = u.scales.x;
-                            if (sx.min == null || sx.max == null) return;
-                            const sxMin = sx.min as number;
-                            const sxMax = sx.max as number;
-                            const oxRange = sxMax - sxMin;
-                            const pan = (e.deltaY < 0 ? -1 : 1) * oxRange * 0.1;
-                            u.setScale("x", { min: sxMin + pan, max: sxMax + pan });
-                            if (xPanRef) xPanRef.current = true;
-                            return;
-                        }
-
                         const overRect = u.over.getBoundingClientRect();
 
-                        // Y-axis gutter → zoom Y about cursor (temporary decouple).
+                        // Left Y-axis gutter → zoom yV about cursor.
                         if (e.clientX < overRect.left) {
-                            const sy = u.scales.y;
-                            if (sy.min == null || sy.max == null) return;
-                            const top = e.clientY - overRect.top;
-                            const anchor = u.posToVal(top, "y");
-                            const oyRange = (sy.max as number) - (sy.min as number);
-                            const nyRange = e.deltaY < 0 ? oyRange * factor : oyRange / factor;
-                            const topPct = top / overRect.height;
-                            const nyMin = anchor - topPct * nyRange;
-                            const nyMax = nyMin + nyRange;
-                            u.setScale("y", { min: nyMin, max: nyMax });
+                            zoomScale("yV", overRect, e);
                             if (lastYZoomMs) lastYZoomMs.current = Date.now();
                             return;
                         }
 
-                        // Wheel → zoom X (time) about the cursor position (temporary decouple).
+                        // Right Y-axis gutter → zoom right-side scales about cursor.
+                        if (e.clientX > overRect.right) {
+                            for (const sk of rightScales) zoomScale(sk, overRect, e);
+                            if (lastYZoomMs) lastYZoomMs.current = Date.now();
+                            return;
+                        }
+
+                        // X zoom on chart body.
                         const sx = u.scales.x;
                         if (sx.min == null || sx.max == null) return;
-                        const left = e.clientX - overRect.left;
-                        const leftPct = left / overRect.width;
-                        const xVal = u.posToVal(left, "x");
+
+                        const running = useScopeStore.getState().running;
+                        const bufferSec = useScopeStore.getState().config.bufferSec;
+                        const maxXRange = bufferSec * 1_000_000;
+                        const z = e.shiftKey ? 0.7 : 0.9; // shift = faster zoom
+
                         const oxRange = (sx.max as number) - (sx.min as number);
-                        const nxRange = e.deltaY < 0 ? oxRange * factor : oxRange / factor;
-                        const nxMin = xVal - leftPct * nxRange;
-                        const nxMax = nxMin + nxRange;
+                        let nxRange = e.deltaY < 0 ? oxRange * z : oxRange / z;
+                        nxRange = Math.min(nxRange, maxXRange); // X clamp
+
+                        let nxMin: number, nxMax: number;
+
+                        if (running) {
+                            // Center on newest data when running
+                            const snap = useScopeStore.getState().getEngine().snapshot();
+                            const latest = snap.t.length > 0 ? snap.t[snap.t.length - 1] : (sx.max as number);
+                            nxMax = latest;
+                            nxMin = latest - nxRange;
+                        } else {
+                            // Center on cursor when paused
+                            const left = e.clientX - overRect.left;
+                            const leftPct = left / overRect.width;
+                            const xVal = u.posToVal(left, "x");
+                            nxMin = xVal - leftPct * nxRange;
+                            nxMax = nxMin + nxRange;
+                        }
+
                         u.setScale("x", { min: nxMin, max: nxMax });
                         if (lastXZoomMs) lastXZoomMs.current = Date.now();
                     };
 
-                    // Drag on the Y-axis gutter → pan the vertical offset.
+                    // Drag on the left Y-axis gutter → pan yV only.
                     const onYMouseDown = (e: MouseEvent) => {
                         const overRect = u.over.getBoundingClientRect();
-                        if (e.clientX >= overRect.left) return; // only the Y-axis gutter
+                        if (e.clientX >= overRect.left) return; // only the left Y-axis gutter
+                        const sy = u.scales.yV;
+                        if (!sy || sy.min == null || sy.max == null) return;
                         dragging = true;
                         startClientY = e.clientY;
                         startOverTop = overRect.top;
-                        if (u.scales.y.min == null || u.scales.y.max == null) return;
-                        startMin = u.scales.y.min as number;
-                        startMax = u.scales.y.max as number;
+                        startMin = sy.min as number;
+                        startMax = sy.max as number;
                         if (yAdjustedRef) yAdjustedRef.current = true;
                         e.preventDefault();
                     };
                     const onYMouseMove = (e: MouseEvent) => {
                         if (!dragging || !u.over) return;
-                        const yStart = u.posToVal(startClientY - startOverTop, "y");
-                        const yNow = u.posToVal(e.clientY - startOverTop, "y");
+                        const yStart = u.posToVal(startClientY - startOverTop, "yV");
+                        const yNow = u.posToVal(e.clientY - startOverTop, "yV");
                         const delta = yStart - yNow; // keep the value under the cursor fixed
-                        u.setScale("y", { min: startMin + delta, max: startMax + delta });
+                        u.setScale("yV", { min: startMin + delta, max: startMax + delta });
                     };
                     const onYMouseUp = () => {
                         dragging = false;
                     };
 
-                    // Double-click resets both axes to data-based bounds.
+                    // Double-click resets all axes to data-based bounds.
                     const onDblClick = () => {
                         // X bounds from data
                         const xData = u.data[0];
@@ -219,24 +304,35 @@ function wheelZoomPlugin(
                         const xMax = xData.length > 0 ? xData[xData.length - 1] : 1_000_000;
                         u.setScale("x", { min: xMin, max: xMax });
 
-                        // Y bounds from visible series
-                        let yMin = Infinity;
-                        let yMax = -Infinity;
+                        // Y bounds per scale, collected from each series' data.
+                        const perScale: Record<string, { min: number; max: number }> = {};
                         for (let s = 1; s < u.series.length; s++) {
+                            const scaleKey = u.series[s].scale;
+                            if (!scaleKey || typeof scaleKey !== "string") continue;
                             const arr = u.data[s];
-                            if (!arr || u.series[s].show === false) continue;
+                            if (!arr) continue;
+                            let lo = Infinity, hi = -Infinity;
                             for (let k = 0; k < arr.length; k++) {
                                 const val = arr[k];
                                 if (val == null) continue;
-                                if (val < yMin) yMin = val;
-                                if (val > yMax) yMax = val;
+                                if (val < lo) lo = val;
+                                if (val > hi) hi = val;
+                            }
+                            if (lo === Infinity) continue;
+                            if (!perScale[scaleKey]) {
+                                perScale[scaleKey] = { min: lo, max: hi };
+                            } else {
+                                if (lo < perScale[scaleKey].min) perScale[scaleKey].min = lo;
+                                if (hi > perScale[scaleKey].max) perScale[scaleKey].max = hi;
                             }
                         }
-                        if (yMin === Infinity || yMax === -Infinity || yMin === yMax) {
-                            u.setScale("y", { min: 0, max: 5 });
-                        } else {
-                            const pad = (yMax - yMin) * 0.1 || 1;
-                            u.setScale("y", { min: yMin - pad, max: yMax + pad });
+                        for (const [key, range] of Object.entries(perScale)) {
+                            if (range.min === range.max) {
+                                u.setScale(key, { min: 0, max: 5 });
+                            } else {
+                                const pad = (range.max - range.min) * 0.1 || 1;
+                                u.setScale(key, { min: range.min - pad, max: range.max + pad });
+                            }
                         }
 
                         // Reset all interaction state.
@@ -269,46 +365,231 @@ function wheelZoomPlugin(
     };
 }
 
+// Detector event markers: dashed line + dot at each event position.
+// Reads directly from the engine (no store sync needed).
+function detectorMarkersPlugin(): uPlot.Plugin {
+    return {
+        hooks: {
+            drawClear: [
+                (u: uPlot) => {
+                    const events = useScopeStore.getState().getEngine().getDetectorEvents();
+                    if (events.length === 0) return;
+
+                    const ctx = u.ctx;
+                    const xMin = u.scales.x.min as number;
+                    const xMax = u.scales.x.max as number;
+
+                    ctx.save();
+
+                    for (const evt of events) {
+                        // Only draw events in the visible X range
+                        if (evt.timestampUs < xMin || evt.timestampUs > xMax) continue;
+
+                        const x = u.valToPos(evt.timestampUs, "x");
+                        const yTop = u.bbox.top;
+                        const yBot = u.bbox.top + u.bbox.height;
+
+                        const color = evt.channel === 'v' ? 'rgba(34,211,238,0.6)' : 'rgba(245,158,11,0.6)';
+
+                        // Vertical dashed line
+                        ctx.strokeStyle = color;
+                        ctx.lineWidth = 1;
+                        ctx.setLineDash([4, 4]);
+                        ctx.beginPath();
+                        ctx.moveTo(x, yTop);
+                        ctx.lineTo(x, yBot);
+                        ctx.stroke();
+
+                        // Dot at the crossing value position
+                        const yScale = evt.channel === 'v' ? 'yV' : 'yI';
+                        const y = u.valToPos(evt.value, yScale);
+
+                        ctx.setLineDash([]);
+                        ctx.fillStyle = color;
+                        ctx.beginPath();
+                        ctx.arc(x, y, 4, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+
+                    ctx.restore();
+                },
+            ],
+        },
+    };
+}
+
+// Visual window band plugin: draws min/max bands + bright avg line per visible
+// channel. Render-only — no data changes. Hides uPlot default series rendering
+// (show:false) and replaces it with bucketed band + avg.
+function visualBandPlugin(): uPlot.Plugin {
+    const NUM_BUCKETS = 200;
+
+    return {
+        hooks: {
+            draw: [
+                (u: uPlot) => {
+                    const ctx = u.ctx;
+                    const channels = useScopeStore.getState().config.channels;
+
+                    const xData = u.data[0] as Float64Array;
+                    if (!xData || xData.length < 2) return;
+
+                    const xMin = u.scales.x.min as number;
+                    const xMax = u.scales.x.max as number;
+                    const xRange = xMax - xMin;
+                    const bucketWidth = xRange / NUM_BUCKETS;
+
+                    ctx.save();
+
+                    let dataIdx = 1;
+                    const seriesInfo: { color: string; idx: number; scale: string }[] = [];
+                    if (channels.v) { seriesInfo.push({ color: CHANNEL_COLORS.v, idx: dataIdx, scale: "yV" }); dataIdx++; }
+                    if (channels.i) { seriesInfo.push({ color: CHANNEL_COLORS.i, idx: dataIdx, scale: "yI" }); dataIdx++; }
+                    if (channels.w) { seriesInfo.push({ color: CHANNEL_COLORS.w, idx: dataIdx, scale: "yW" }); dataIdx++; }
+
+                    for (const info of seriesInfo) {
+                        const arr = u.data[info.idx] as Float64Array;
+                        if (!arr || arr.length < 2) continue;
+
+                        const buckets: { min: number; max: number; sum: number; count: number }[] = [];
+                        for (let b = 0; b < NUM_BUCKETS; b++) {
+                            buckets.push({ min: Infinity, max: -Infinity, sum: 0, count: 0 });
+                        }
+
+                        for (let k = 0; k < xData.length; k++) {
+                            const t = xData[k];
+                            if (t < xMin || t > xMax) continue;
+                            const bucketIdx = Math.min(NUM_BUCKETS - 1, Math.floor((t - xMin) / bucketWidth));
+                            const val = arr[k];
+                            const b = buckets[bucketIdx];
+                            if (val < b.min) b.min = val;
+                            if (val > b.max) b.max = val;
+                            b.sum += val;
+                            b.count++;
+                        }
+
+                        const bandPath = new Path2D();
+                        const avgPath = new Path2D();
+                        let bandStarted = false;
+                        let avgStarted = false;
+
+                        // Forward pass: max band edge + avg line
+                        for (let b = 0; b < NUM_BUCKETS; b++) {
+                            const bucket = buckets[b];
+                            if (bucket.count === 0) continue;
+
+                            const tCenter = xMin + (b + 0.5) * bucketWidth;
+                            const x = u.valToPos(tCenter, "x");
+                            const avg = bucket.sum / bucket.count;
+                            const yMax = u.valToPos(bucket.max, info.scale);
+                            const yAvg = u.valToPos(avg, info.scale);
+
+                            if (!bandStarted) { bandPath.moveTo(x, yMax); bandStarted = true; }
+                            else { bandPath.lineTo(x, yMax); }
+
+                            if (!avgStarted) { avgPath.moveTo(x, yAvg); avgStarted = true; }
+                            else { avgPath.lineTo(x, yAvg); }
+                        }
+
+                        // Backward pass: min band edge (close the polygon)
+                        for (let b = NUM_BUCKETS - 1; b >= 0; b--) {
+                            const bucket = buckets[b];
+                            if (bucket.count === 0) continue;
+                            const tCenter = xMin + (b + 0.5) * bucketWidth;
+                            const x = u.valToPos(tCenter, "x");
+                            const yMin = u.valToPos(bucket.min, info.scale);
+                            bandPath.lineTo(x, yMin);
+                        }
+                        bandPath.closePath();
+
+                        // Fill: semi-transparent band
+                        ctx.fillStyle = info.color + "20";
+                        ctx.fill(bandPath);
+
+                        // Stroke: thin band border
+                        ctx.strokeStyle = info.color + "40";
+                        ctx.lineWidth = 0.5;
+                        ctx.stroke(bandPath);
+
+                        // Stroke: bright avg line
+                        ctx.strokeStyle = info.color;
+                        ctx.lineWidth = 1.5;
+                        ctx.stroke(avgPath);
+                    }
+
+                    ctx.restore();
+                },
+            ],
+        },
+    };
+}
+
 export function useScopeEngine(
     containerRef: RefObject<HTMLDivElement | null>,
+    uRef: RefObject<uPlot | null>,
     channelKey: string,
 ): void {
-    const uRef = useRef<uPlot | null>(null);
     const rafRef = useRef<number | null>(null);
     const regionRef = useRef<RegionSelection | null>(null);
     // Separate tracking for X and Y so one interaction never breaks the other.
-    const xPanRef = useRef(false); // shift+wheel pan → permanent X decouple
+    const xPanRef = useRef(false); // kept for double-click reset; shift+pan removed
     const yAdjustedRef = useRef(false); // Y-gutter drag → permanent Y decouple
     const lastXZoomMs = useRef(0); // wheel-zoom X → temporary, auto-follow resumes after 2000ms idle
     const lastYZoomMs = useRef(0); // wheel-zoom Y → temporary, auto-range resumes after 2000ms idle
-    const lastVScaleRef = useRef(useScopeStore.getState().config.vScale); // track last applied vScale to avoid spurious resets
+    // Track last applied Y scales to avoid spurious interaction-state resets.
+    const lastVYScaleRef = useRef(useScopeStore.getState().config.vYScale);
+    const lastIYScaleRef = useRef(useScopeStore.getState().config.iYScale);
+    const lastWYScaleRef = useRef(useScopeStore.getState().config.wYScale);
 
     const region = useScopeStore((s) => s.region);
     const setRegion = useScopeStore((s) => s.setRegion);
-    const vScale = useScopeStore((s) => s.config.vScale);
+    const vYScale = useScopeStore((s) => s.config.vYScale);
+    const iYScale = useScopeStore((s) => s.config.iYScale);
+    const wYScale = useScopeStore((s) => s.config.wYScale);
 
     // Keep latest region in a ref so the draw hook reads current value.
     useEffect(() => {
         regionRef.current = region;
     }, [region]);
 
-    // Apply vertical-scale changes live (no chart rebuild, keeps zoom).
-    useEffect(() => {
-        const u = uRef.current;
-        if (!u) return;
-
-        const prev = lastVScaleRef.current;
-        const vChanged = prev.auto !== vScale.auto || prev.min !== vScale.min || prev.max !== vScale.max;
-        lastVScaleRef.current = vScale;
-
-        u.setScale("y", (vScale.auto ? { min: 0, max: 5 } : { min: vScale.min, max: vScale.max }) as unknown as { min: number; max: number });
-
-        // Only reset user interaction state if vScale actually changed.
-        if (vChanged) {
+    // Apply per-channel Y-scale changes live (no chart rebuild, keeps zoom).
+    // Helper: apply a YScale config to a named uPlot scale.
+    const applyYScale = (
+        u: uPlot,
+        scaleKey: string,
+        yScale: YScale,
+        lastRef: React.MutableRefObject<YScale>,
+    ) => {
+        const prev = lastRef.current;
+        const changed = prev.auto !== yScale.auto || prev.min !== yScale.min || prev.max !== yScale.max;
+        lastRef.current = yScale;
+        if (!yScale.auto) {
+            u.setScale(scaleKey, { min: yScale.min, max: yScale.max });
+        }
+        // Only reset user interaction state if the scale config actually changed.
+        if (changed) {
             yAdjustedRef.current = false;
             lastYZoomMs.current = 0;
         }
-    }, [vScale]);
+    };
+
+    useEffect(() => {
+        const u = uRef.current;
+        if (!u) return;
+        applyYScale(u, "yV", vYScale, lastVYScaleRef);
+    }, [vYScale]);
+
+    useEffect(() => {
+        const u = uRef.current;
+        if (!u) return;
+        applyYScale(u, "yI", iYScale, lastIYScaleRef);
+    }, [iYScale]);
+
+    useEffect(() => {
+        const u = uRef.current;
+        if (!u) return;
+        applyYScale(u, "yW", wYScale, lastWYScaleRef);
+    }, [wYScale]);
 
     // Init / rebuild the chart when the channel set changes.
     useEffect(() => {
@@ -316,44 +597,21 @@ export function useScopeEngine(
         if (!el) return;
 
         const channels = useScopeStore.getState().config.channels;
-        const vScale = useScopeStore.getState().config.vScale;
         const seriesDefs = buildSeries(channels);
-
-        // When auto-ranging with no data yet, start at a sensible 0–5 V window
-        // instead of uPlot's degenerate empty-data range.
-        const yScale: uPlot.Scale = vScale.auto
-            ? { min: 0, max: 5 }
-            : { min: vScale.min, max: vScale.max };
 
         const opts: uPlot.Options = {
             width: el.clientWidth || 800,
             height: el.clientHeight || 400,
             series: seriesDefs,
-            scales: {
-                x: { time: false },
-                y: yScale,
-            },
-            axes: [
-                {
-                    values: xAxisValues,
-                    label: "Time (s)",
-                    stroke: AXIS,
-                    grid: { stroke: GRID },
-                    ticks: { stroke: GRID },
-                },
-                {
-                    stroke: AXIS,
-                    grid: { stroke: GRID },
-                    ticks: { stroke: GRID },
-                },
-            ],
+            scales: buildScales(channels),
+            axes: buildAxes(channels),
             cursor: {
                 drag: { x: true, y: false, setScale: false, dist: 5 },
             },
             // Hide uPlot's own selection box; we draw a custom region band.
             select: { show: false, left: 0, top: 0, width: 0, height: 0 },
             legend: { show: true },
-            plugins: [wheelZoomPlugin(0.9, xPanRef, yAdjustedRef, lastXZoomMs, lastYZoomMs), tooltipPlugin()],
+            plugins: [wheelZoomPlugin(0.9, xPanRef, yAdjustedRef, lastXZoomMs, lastYZoomMs), tooltipPlugin(), visualBandPlugin(), detectorMarkersPlugin()],
             hooks: {
                 // Drag finished → record the selected display-time window.
                 setSelect: [
@@ -395,6 +653,12 @@ export function useScopeEngine(
         uRef.current = u;
         log("chart built channels=%s size=%dx%d", channelKey, u.bbox.width, u.bbox.height);
 
+        // Map each channel to its data-array index (index 0 = t).
+        let dataIdx = 1;
+        const vIdx = channels.v ? dataIdx++ : -1;
+        const iIdx = channels.i ? dataIdx++ : -1;
+        const wIdx = channels.w ? dataIdx++ : -1;
+
         // rAF loop: pull engine snapshot → setData. resetScales=false keeps zoom.
         const loop = () => {
             const snap = useScopeStore.getState().getEngine().snapshot();
@@ -405,23 +669,27 @@ export function useScopeEngine(
             u.setData(data, false);
 
             const hz = useScopeStore.getState().config.hZoomSec;
-            const vScale = useScopeStore.getState().config.vScale;
-            const vZoom = useScopeStore.getState().config.vZoom;
-            const followLatest = useScopeStore.getState().config.followLatest;
+            const config = useScopeStore.getState().config;
+            const followLatest = config.followLatest;
 
-            // X axis auto-follow: skipped when user has shift+wheel-panned
-            // (permanent) or wheel-zoomed X within the last 2000ms (temporary).
+            // X axis auto-follow: skipped when user has wheel-zoomed X
+            // within the last 2000ms (temporary decouple).
             // Y interactions never block X.
             if (!xPanRef.current && (Date.now() - lastXZoomMs.current) > 2000 && snap.t.length > 0) {
+                const maxXRange = useScopeStore.getState().config.bufferSec * 1_000_000;
                 if (hz > 0) {
+                    const effectiveHz = Math.min(hz, useScopeStore.getState().config.bufferSec);
                     const latest = snap.t[snap.t.length - 1];
                     if (followLatest) {
-                        const t0 = latest - hz * 1_000_000;
+                        const t0 = latest - effectiveHz * 1_000_000;
                         u.setScale("x", { min: t0, max: latest });
                     } else {
-                        const currentWidth = ((u.scales.x.max as number) - (u.scales.x.min as number)) || (hz * 1_000_000);
+                        const currentWidth = Math.min(
+                            ((u.scales.x.max as number) - (u.scales.x.min as number)) || (effectiveHz * 1_000_000),
+                            maxXRange,
+                        );
                         const sxMin = u.scales.x.min as number;
-                        const t0 = (sxMin == null || (sxMin === 0 && latest > 1000)) ? (latest - hz * 1_000_000) : sxMin;
+                        const t0 = (sxMin == null || (sxMin === 0 && latest > 1000)) ? (latest - effectiveHz * 1_000_000) : sxMin;
                         const t1 = t0 + currentWidth;
                         u.setScale("x", { min: t0, max: t1 });
                     }
@@ -431,32 +699,79 @@ export function useScopeEngine(
                     if (t1 <= t0) t1 = t0 + 1; // avoid degenerate single-point range
                     u.setScale("x", { min: t0, max: t1 });
                 }
+                // Clamp visible range to bufferSec
+                const visibleRange = (u.scales.x.max as number) - (u.scales.x.min as number);
+                if (visibleRange > maxXRange) {
+                    const center = ((u.scales.x.min as number) + (u.scales.x.max as number)) / 2;
+                    u.setScale("x", { min: center - maxXRange / 2, max: center + maxXRange / 2 });
+                }
             }
 
             // Y axis auto-range: blocked by Y-gutter drag (permanent) or
             // wheel-zoom Y within the last 2000ms (temporary).
             if (!yAdjustedRef.current && (Date.now() - lastYZoomMs.current) > 2000) {
-                if (snap.t.length === 0) {
-                    if (vScale.auto) u.setScale("y", { min: 0, max: 5 });
-                } else if (vScale.auto) {
-                    let lo = Infinity;
-                    let hi = -Infinity;
-                    for (let s = 1; s < data.length; s++) {
-                        const arr = data[s] as Float64Array;
-                        for (let k = 0; k < arr.length; k++) {
-                            const val = arr[k];
-                            if (val < lo) lo = val;
-                            if (val > hi) hi = val;
-                        }
+                // Auto-range one scale from a data array.
+                const autoRange = (idx: number, scaleKey: string, auto: boolean) => {
+                    if (!auto) return;
+                    if (snap.t.length === 0) {
+                        u.setScale(scaleKey, { min: 0, max: 5 });
+                        return;
                     }
-                    if (lo !== Infinity) {
+                    const arr = data[idx] as Float64Array;
+                    let lo = Infinity, hi = -Infinity;
+                    for (let k = 0; k < arr.length; k++) {
+                        const val = arr[k];
+                        if (val < lo) lo = val;
+                        if (val > hi) hi = val;
+                    }
+                    if (lo !== Infinity && lo !== hi) {
                         const pad = (hi - lo) * 0.1 || 1;
                         lo -= pad;
                         hi += pad;
-                        const mid = (lo + hi) / 2;
-                        const safeZoom = Math.max(0.1, vZoom);
-                        const half = ((hi - lo) / 2) / safeZoom;
-                        u.setScale("y", { min: mid - half, max: mid + half });
+                        u.setScale(scaleKey, { min: lo, max: hi });
+                    }
+                };
+
+                if (vIdx >= 0) autoRange(vIdx, "yV", config.vYScale.auto);
+                if (iIdx >= 0) autoRange(iIdx, "yI", config.iYScale.auto);
+                if (wIdx >= 0) autoRange(wIdx, "yW", config.wYScale.auto);
+            }
+
+            // Out-of-range Y notification (once per channel)
+            for (const ch of ['v', 'i', 'w'] as const) {
+                const chIdx = ch === 'v' ? vIdx : ch === 'i' ? iIdx : wIdx;
+                if (chIdx < 0) continue;
+                const arr = data[chIdx] as Float64Array;
+                if (!arr || arr.length === 0) continue;
+                const scaleKey = ch === 'v' ? 'yV' : ch === 'i' ? 'yI' : 'yW';
+                const s = (u.scales as Record<string, any>)[scaleKey];
+                if (!s || s.min == null || s.max == null) continue;
+                const yMin = s.min as number;
+                const yMax = s.max as number;
+
+                let outOfRange = false;
+                for (let k = 0; k < arr.length; k++) {
+                    const v = arr[k];
+                    if (v < yMin || v > yMax) { outOfRange = true; break; }
+                }
+
+                if (outOfRange && !ooActive[ch]) {
+                    ooActive[ch] = true;
+                    const label = ch === 'v' ? 'Voltage' : ch === 'i' ? 'Current' : 'Power';
+                    useScopeStore.getState().notify({
+                        type: 'warning',
+                        title: `${label} out of range`,
+                        message: 'Data outside visible Y-axis. Double-click chart to reset.',
+                        timeout: 0,
+                    });
+                } else if (!outOfRange && ooActive[ch]) {
+                    ooActive[ch] = false;
+                    // Dismiss all out-of-range notifications
+                    const notifs = useScopeStore.getState().notifications;
+                    for (const n of notifs) {
+                        if (n.title?.includes('out of range')) {
+                            useScopeStore.getState().dismissNotification(n.id);
+                        }
                     }
                 }
             }
