@@ -5,3 +5,35 @@
         @apply antialiased text-gray-900;
     }
 }
+
+/* ── uPlot dark theme overrides ── */
+
+.scope-plot {
+    --uplot-bg: transparent;
+}
+
+.scope-plot .u-over {
+    background: transparent;
+}
+
+.scope-plot .u-under {
+    background: transparent;
+}
+
+/* Selection rectangle */
+.scope-plot .u-select {
+    background: rgba(59, 130, 246, 0.12);
+    border: 1px solid rgba(59, 130, 246, 0.5);
+    pointer-events: none;
+}
+
+/* Cursor crosshair */
+.scope-plot .u-cursor-x {
+    border-left: 1px dashed rgba(156, 163, 175, 0.4);
+    pointer-events: none;
+}
+
+.scope-plot .u-cursor-y {
+    border-top: 1px dashed rgba(156, 163, 175, 0.4);
+    pointer-events: none;
+}

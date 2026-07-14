@@ -2,8 +2,10 @@
 // Separate from the old drawing store — both coexist during transition.
 
 import { create } from "zustand";
-import type { ScopeConfig, ScopeStatus } from "../scope/engineTypes";
-import type { BucketedTelemetryData } from "../scope/workerTypes";
+import type { ScopeConfig, ScopeStatus } from "../scope/types/engineTypes";
+import type { BucketedTelemetryData } from "../scope/types/workerTypes";
+import type { ScopeEngine } from "../scope/ingest/ScopeEngine";
+import type { ScaleTier } from "../scope/lib/hysteresis";
 
 export interface SelectionResult {
     energyJ: number;
@@ -16,11 +18,11 @@ export interface ScopeStoreState {
     config: ScopeConfig;
     setConfig: (patch: Partial<ScopeConfig>) => void;
 
-    // Status (updated by worker messages)
+    // Status (updated by engine polling)
     status: ScopeStatus;
     setStatus: (s: ScopeStatus) => void;
 
-    // Bucketed data (latest from get-data-since)
+    // Bucketed data (latest from polling)
     latestData: BucketedTelemetryData | null;
     setLatestData: (d: BucketedTelemetryData | null) => void;
 
@@ -28,9 +30,21 @@ export interface ScopeStoreState {
     selection: SelectionResult | null;
     setSelection: (sel: SelectionResult | null) => void;
 
-    // Worker ref (set once on mount)
-    workerRef: Worker | null;
-    setWorkerRef: (w: Worker | null) => void;
+    // Session energy / charge totals (updated periodically)
+    sessionTotals: { energyJ: number; chargeC: number };
+    setSessionTotals: (t: { energyJ: number; chargeC: number }) => void;
+
+    // Current hysteresis tier for I-axis display scaling
+    hysteresisTier: ScaleTier;
+    setHysteresisTier: (t: ScaleTier) => void;
+
+    // Engine ref (set once on mount, used by components for direct calls)
+    engineRef: ScopeEngine | null;
+    setEngineRef: (e: ScopeEngine | null) => void;
+
+    // Serial connection actions (wired by useScopeEngineManager)
+    connectSerial: () => Promise<void>;
+    disconnectSerial: () => Promise<void>;
 }
 
 const defaultConfig: ScopeConfig = {
@@ -65,6 +79,15 @@ export const useScopeStore = create<ScopeStoreState>((set) => ({
     selection: null,
     setSelection: (selection) => set({ selection }),
 
-    workerRef: null,
-    setWorkerRef: (workerRef) => set({ workerRef }),
+    sessionTotals: { energyJ: 0, chargeC: 0 },
+    setSessionTotals: (sessionTotals) => set({ sessionTotals }),
+
+    hysteresisTier: "ma" as ScaleTier,
+    setHysteresisTier: (hysteresisTier) => set({ hysteresisTier }),
+
+    engineRef: null,
+    setEngineRef: (engineRef) => set({ engineRef }),
+
+    connectSerial: async () => {},
+    disconnectSerial: async () => {},
 }));

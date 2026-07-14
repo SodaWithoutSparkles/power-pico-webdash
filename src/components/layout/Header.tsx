@@ -8,9 +8,9 @@ import { HelpMenu } from './header/HelpMenu';
 export const Header: React.FC = () => {
     const [activeMenu, setActiveMenu] = useState<string | null>(null);
     const status = useScopeStore((s) => s.status);
-    const workerRef = useScopeStore((s) => s.workerRef);
-
-    const post = (msg: any) => workerRef?.postMessage(msg);
+    const engineRef = useScopeStore((s) => s.engineRef);
+    const connectSerial = useScopeStore((s) => s.connectSerial);
+    const disconnectSerial = useScopeStore((s) => s.disconnectSerial);
 
     const isRunning = status.running;
     const mode = status.mode;
@@ -28,13 +28,13 @@ export const Header: React.FC = () => {
                 onCloseMenu={() => setActiveMenu(null)}
                 isRunning={isRunning}
                 mode={mode}
-                onConnectSerial={() => post({ type: 'connect-serial' })}
-                onDisconnect={() => post({ type: 'disconnect' })}
-                onStartSimulate={() => post({ type: 'start-simulate' })}
-                onStart={() => post({ type: 'start' })}
-                onPause={() => post({ type: 'pause' })}
-                onClear={() => post({ type: 'clear' })}
-                onSetTZero={() => post({ type: 'set-t-zero', rawTsUs: status.lastTimestampUs })}
+                onConnectSerial={connectSerial}
+                onDisconnect={disconnectSerial}
+                onStartSimulate={() => engineRef?.startSimulate()}
+                onStart={() => engineRef?.start()}
+                onPause={() => engineRef?.pause()}
+                onClear={() => engineRef?.clear()}
+                onSetTZero={() => engineRef?.setTZero(status.lastTimestampUs)}
                 onExportScreenshot={() => {
                     const canvas = document.querySelector('canvas');
                     if (canvas) {

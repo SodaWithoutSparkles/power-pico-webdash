@@ -22,9 +22,9 @@ export const RightSidebar: React.FC = () => {
     const config = useScopeStore((s) => s.config);
     const setConfig = useScopeStore((s) => s.setConfig);
     const status = useScopeStore((s) => s.status);
-    const workerRef = useScopeStore((s) => s.workerRef);
-
-    const post = (msg: any) => workerRef?.postMessage(msg);
+    const engineRef = useScopeStore((s) => s.engineRef);
+    const connectSerial = useScopeStore((s) => s.connectSerial);
+    const disconnectSerial = useScopeStore((s) => s.disconnectSerial);
 
     return (
         <div className="w-64 bg-gray-800 border-l border-gray-700 flex flex-col text-gray-300 z-20 overflow-y-auto">
@@ -46,14 +46,14 @@ export const RightSidebar: React.FC = () => {
                 </div>
                 {status.mode === 'serial' ? (
                     <button
-                        onClick={() => post({ type: 'disconnect' })}
+                        onClick={disconnectSerial}
                         className="w-full px-3 py-1.5 bg-red-700 hover:bg-red-600 rounded text-xs font-medium"
                     >
                         Disconnect
                     </button>
                 ) : (
                     <button
-                        onClick={() => post({ type: 'connect-serial' })}
+                        onClick={connectSerial}
                         className="w-full px-3 py-1.5 bg-blue-700 hover:bg-blue-600 rounded text-xs font-medium"
                     >
                         Connect Serial
@@ -112,13 +112,13 @@ export const RightSidebar: React.FC = () => {
             {/* T+0 */}
             <Section title="T+0">
                 <button
-                    onClick={() => post({ type: 'set-t-zero', rawTsUs: status.lastTimestampUs })}
+                    onClick={() => engineRef?.setTZero(status.lastTimestampUs)}
                     className="w-full px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-xs font-medium"
                 >
                     Set T=0
                 </button>
                 <button
-                    onClick={() => post({ type: 'reset-t-zero' })}
+                    onClick={() => engineRef?.resetTZero()}
                     className="w-full px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-xs font-medium"
                 >
                     Reset T=0

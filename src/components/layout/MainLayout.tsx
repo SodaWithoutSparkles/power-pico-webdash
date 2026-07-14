@@ -3,9 +3,9 @@ import { Header } from './Header';
 import { LeftSidebar } from './LeftSidebar';
 import { RightSidebar } from './RightSidebar';
 import { BottomBar } from './BottomBar';
-import { ScopeCanvas } from '../../scope/ScopeCanvas';
-import { Measurements } from '../../scope/Measurements';
-import { useScopeEngineManager } from '../../scope/useScopeEngineManager';
+import { ScopeCanvas } from '../../scope/ui/ScopeCanvas';
+import { Measurements } from '../../scope/ui/Measurements';
+import { useScopeEngineManager } from '../../scope/hooks/useScopeEngineManager';
 
 export const MainLayout: React.FC = () => {
     // Boot the worker engine

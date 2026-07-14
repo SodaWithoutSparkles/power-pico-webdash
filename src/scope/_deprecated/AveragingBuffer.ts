@@ -2,8 +2,8 @@
 // per packet once the window is full — oscilloscope-like time base (matches
 // decode.py's deque(maxlen=20) behaviour).
 
-import type { DecodedPacket } from "./decode";
-import type { DisplayPoint } from "./engineTypes";
+import type { DecodedPacket } from "../decode/decode";
+import type { DisplayPoint } from "../types/engineTypes";
 
 export class AveragingBuffer {
     private packets: DecodedPacket[] = [];

@@ -1,12 +1,15 @@
 // Min-max bucketing format engine.
 // Converts raw ring buffer data into bucketed averages + min/max for display.
 
-import { TelemetryRingBuffer } from "./TelemetryRingBuffer";
-import type { BucketedTelemetryData } from "./workerTypes";
+import { TelemetryRingBuffer } from "../ring/TelemetryRingBuffer";
+import { computeBucketRanges } from "../lib/bucket";
+import type { BucketedTelemetryData } from "../types/workerTypes";
 
 /**
  * Bucket the range [startTs, endTs) into `bucketCount` slices.
  * Each bucket produces avg/min/max for V and I, plus a midpoint timestamp.
+ *
+ * Uses computeBucketRanges from the shared bucket lib for boundary logic.
  */
 export function bucketData(
     ring: TelemetryRingBuffer,
@@ -25,25 +28,22 @@ export function bucketData(
         endIdx = ring.headIdx;
     }
     const totalCount = ring.logicalCount(startIdx, endIdx);
-
     if (totalCount <= 0) return _emptyBuckets(0);
 
-    const buckets = Math.min(bucketCount, totalCount);
-    const timestamps = new Float64Array(buckets);
-    const avgV = new Float32Array(buckets);
-    const minV = new Float32Array(buckets);
-    const maxV = new Float32Array(buckets);
-    const avgI = new Float32Array(buckets);
-    const minI = new Float32Array(buckets);
-    const maxI = new Float32Array(buckets);
+    const actualBuckets = Math.min(bucketCount, totalCount);
+    const ranges = computeBucketRanges(totalCount, actualBuckets);
+    const cap = ring.capacity;
 
-    const samplesPerBucket = Math.max(1, Math.floor(totalCount / buckets));
-    let outIdx = 0;
-    let currentRingIdx = startIdx;
-    let remaining = totalCount;
+    const timestamps = new Float64Array(actualBuckets);
+    const avgV = new Float32Array(actualBuckets);
+    const minV = new Float32Array(actualBuckets);
+    const maxV = new Float32Array(actualBuckets);
+    const avgI = new Float32Array(actualBuckets);
+    const minI = new Float32Array(actualBuckets);
+    const maxI = new Float32Array(actualBuckets);
 
-    while (remaining > 0 && outIdx < buckets) {
-        const take = Math.min(samplesPerBucket, remaining);
+    for (let b = 0; b < actualBuckets; b++) {
+        const { start, end } = ranges[b];
         let sumV = 0;
         let sumI = 0;
         let mnV = Infinity;
@@ -51,45 +51,28 @@ export function bucketData(
         let mnI = Infinity;
         let mxI = -Infinity;
         let tsSum = 0n;
-        let tsCount = 0;
 
-        for (let i = 0; i < take; i++) {
-            const v = ring.voltages[currentRingIdx];
-            const iVal = ring.currents[currentRingIdx];
+        for (let j = start; j < end; j++) {
+            const idx = (startIdx + j) % cap;
+            const v = ring.voltages[idx];
+            const iVal = ring.currents[idx];
             sumV += v;
             sumI += iVal;
             if (v < mnV) mnV = v;
             if (v > mxV) mxV = v;
             if (iVal < mnI) mnI = iVal;
             if (iVal > mxI) mxI = iVal;
-            tsSum += ring.timestamps[currentRingIdx];
-            tsCount++;
-            currentRingIdx = (currentRingIdx + 1) % ring.capacity;
+            tsSum += ring.timestamps[idx];
         }
 
-        timestamps[outIdx] = Number(tsSum / BigInt(tsCount));
-        avgV[outIdx] = sumV / take;
-        minV[outIdx] = mnV === Infinity ? 0 : mnV;
-        maxV[outIdx] = mxV === -Infinity ? 0 : mxV;
-        avgI[outIdx] = sumI / take;
-        minI[outIdx] = mnI === Infinity ? 0 : mnI;
-        maxI[outIdx] = mxI === -Infinity ? 0 : mxI;
-
-        outIdx++;
-        remaining -= take;
-    }
-
-    // Trim if we allocated more than needed
-    if (outIdx < buckets) {
-        return {
-            timestamps: timestamps.subarray(0, outIdx) as Float64Array,
-            avgV: avgV.subarray(0, outIdx) as Float32Array,
-            minV: minV.subarray(0, outIdx) as Float32Array,
-            maxV: maxV.subarray(0, outIdx) as Float32Array,
-            avgI: avgI.subarray(0, outIdx) as Float32Array,
-            minI: minI.subarray(0, outIdx) as Float32Array,
-            maxI: maxI.subarray(0, outIdx) as Float32Array,
-        };
+        const count = end - start;
+        timestamps[b] = Number(tsSum / BigInt(count));
+        avgV[b] = sumV / count;
+        minV[b] = mnV === Infinity ? 0 : mnV;
+        maxV[b] = mxV === -Infinity ? 0 : mxV;
+        avgI[b] = sumI / count;
+        minI[b] = mnI === Infinity ? 0 : mnI;
+        maxI[b] = mxI === -Infinity ? 0 : mxI;
     }
 
     return { timestamps, avgV, minV, maxV, avgI, minI, maxI };

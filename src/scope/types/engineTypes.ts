@@ -1,6 +1,6 @@
 // Shared types for the scope engine (Phase 2). DOM-free, no deps.
 
-import type { DecodedPacket } from "./decode";
+import type { DecodedPacket } from "../decode/decode";
 
 export interface ScopeChannels {
     v: boolean;
@@ -82,3 +82,4 @@ export type StatusCallback = (status: ScopeStatus) => void;
 export type ErrorCallback = (error: Error) => void;
 
 export type { DecodedPacket };
+

@@ -1,7 +1,7 @@
 // Integration math for energy (J) and charge (C).
 // Dual-stage accumulation to avoid precision loss with many small steps.
 
-import { TelemetryRingBuffer } from "./TelemetryRingBuffer";
+import { TelemetryRingBuffer } from "../ring/TelemetryRingBuffer";
 
 /**
  * Dual-stage integrator that accumulates charge (Coulombs) and energy (Joules).

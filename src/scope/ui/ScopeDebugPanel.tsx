@@ -2,8 +2,8 @@
 // Shows text readouts — no graph. Temporary; replaced in Phase C.
 
 import React from "react";
-import { useScopeStore } from "../store/scopeStore";
-import { useScopeEngineManager } from "./useScopeEngineManager";
+import { useScopeStore } from "../../store/scopeStore";
+import { useScopeEngineManager } from "../hooks/useScopeEngineManager";
 import clsx from "clsx";
 
 export const ScopeDebugPanel: React.FC = () => {

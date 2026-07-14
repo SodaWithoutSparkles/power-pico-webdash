@@ -36,6 +36,15 @@ export class TelemetryRingBuffer {
         if (this.count < this.capacity) return 0;
         return this.head; // head points at oldest when full
     }
+    /** Index of the most recent element (logical end). */
+    get lastIdx(): number {
+        if (this.count === 0) return -1;
+        return this.head === 0 ? this.capacity - 1 : this.head - 1;
+    }
+    get isFull(): boolean {
+        return this.count === this.capacity;
+    }
+
 
     /** Push one sample. O(1). */
     push(ts: bigint, v: number, i: number): void {
@@ -107,6 +116,17 @@ export class TelemetryRingBuffer {
 
         this._copyRange(startIdx, endIdx, ts, vs, cs);
         return { timestamps: ts, voltages: vs, currents: cs };
+    }
+
+    /**
+     * Return a contiguous copy of the last `count` samples in chronological order.
+     * If count > length, returns all samples.
+     */
+    sliceLast(count: number): { timestamps: BigInt64Array; voltages: Float32Array; currents: Float32Array } {
+        if (count <= 0) return { timestamps: new BigInt64Array(0), voltages: new Float32Array(0), currents: new Float32Array(0) };
+        if (count > this.count) count = this.count;
+        const startIdx = (this.head - count + this.capacity) % this.capacity;
+        return this.slice(startIdx, this.head);
     }
 
     /**

@@ -1,7 +1,7 @@
 // Synthetic packet generator so the scope runs without hardware.
 // Sine voltage + noisy current; timestamp advances at pktRateHz.
 
-import { LOW_CUR, type DecodedPacket, type Sample } from "./decode.ts";
+import { LOW_CUR, type DecodedPacket, type Sample } from "../decode/decode.ts";
 
 export class Simulator {
     private tUs = 0;

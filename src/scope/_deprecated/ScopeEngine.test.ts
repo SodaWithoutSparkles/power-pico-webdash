@@ -4,8 +4,8 @@ import assert from "node:assert/strict";
 import { ScopeEngine } from "./ScopeEngine.ts";
 import { DisplayRingBuffer } from "./DisplayRingBuffer.ts";
 import { AveragingBuffer } from "./AveragingBuffer.ts";
-import { Simulator } from "./simulate.ts";
-import { decodePacket, type DecodedPacket } from "./decode.ts";
+import { Simulator } from "../ingest/simulate.ts";
+import { decodePacket, type DecodedPacket } from "../decode/decode.ts";
 
 function pkt(tsUs: number, volts: number, amps: number): DecodedPacket {
     return {

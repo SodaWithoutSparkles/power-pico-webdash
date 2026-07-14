@@ -2,10 +2,10 @@
 // Pipeline: read chunks → PacketParser → AveragingBuffer (k) → DisplayRingBuffer (N).
 // Read-only serial. T+0 offset + backward-jump guard keep the trace continuous.
 
-import { PacketParser } from "./decode.ts";
+import { PacketParser } from "../decode/decode.ts";
 import { AveragingBuffer } from "./AveragingBuffer.ts";
 import { DisplayRingBuffer } from "./DisplayRingBuffer.ts";
-import { Simulator } from "./simulate.ts";
+import { Simulator } from "../ingest/simulate.ts";
 import type {
     DisplaySnapshot,
     ErrorCallback,
@@ -13,7 +13,7 @@ import type {
     ScopeMode,
     ScopeStatus,
     StatusCallback,
-} from "./engineTypes";
+} from "../types/engineTypes";
 
 const DEFAULT_CONFIG: ScopeConfig = {
     baudRate: 115200,
@@ -30,7 +30,13 @@ export class ScopeEngine {
     private parser = new PacketParser();
     private avg: AveragingBuffer;
     private ring: DisplayRingBuffer;
-    private sim = new Simulator();
+
+    // sim match real device: 10 pkts/ms
+    private sim = new Simulator(
+        1000, // pktRateHz
+        10,   // samplesPerPkt
+        0.5,  // freqHz
+    );
 
     private port: SerialPort | null = null;
     private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -152,7 +158,7 @@ export class ScopeEngine {
     }
 
     // Feed a decoded packet directly (tests, or future non-serial sources).
-    pushPacket(pkt: import("./decode").DecodedPacket): void {
+    pushPacket(pkt: import("../decode/decode").DecodedPacket): void {
         this.ingest(pkt);
     }
 
@@ -203,7 +209,7 @@ export class ScopeEngine {
     }
 
     // --- Core ingest: packet → averaged point → ring ----------------------
-    private ingest(pkt: import("./decode").DecodedPacket): void {
+    private ingest(pkt: import("../decode/decode").DecodedPacket): void {
         this.pktCount++;
         this.sampleCount += pkt.dataCount;
         this.trackPktRate();

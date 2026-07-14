@@ -2,7 +2,7 @@
 // full (scrolling trace). snapshot() returns channels in chronological order
 // for direct hand-off to uPlot.
 
-import type { DisplayPoint, DisplaySnapshot } from "./engineTypes";
+import type { DisplayPoint, DisplaySnapshot } from "../types/engineTypes";
 
 export class DisplayRingBuffer {
     private t: Float64Array;

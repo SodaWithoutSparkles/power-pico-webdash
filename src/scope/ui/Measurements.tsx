@@ -2,11 +2,12 @@
 // Shows instant V/I/W, session energy/charge, and region selection results.
 
 import React from "react";
-import { useScopeStore } from "../store/scopeStore";
+import { useScopeStore } from "../../store/scopeStore";
 
 export const Measurements: React.FC = () => {
     const status = useScopeStore((s) => s.status);
     const selection = useScopeStore((s) => s.selection);
+    const sessionTotals = useScopeStore((s) => s.sessionTotals);
 
     return (
         <div className="space-y-3 text-xs">
@@ -20,7 +21,16 @@ export const Measurements: React.FC = () => {
                 <Row label="P" value={`${status.liveW.toFixed(3)} W`} color="text-fuchsia-400" />
             </div>
 
-            {/* Session totals would go here — populated by periodic get-integration */}
+            {/* Session totals */}
+            {(sessionTotals.energyJ > 0 || sessionTotals.chargeC > 0) && (
+                <div className="bg-gray-900/50 rounded p-2 space-y-1">
+                    <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold mb-1">
+                        Session
+                    </div>
+                    <Row label="Energy" value={`${sessionTotals.energyJ.toFixed(3)} J`} />
+                    <Row label="Charge" value={`${sessionTotals.chargeC.toFixed(3)} C`} />
+                </div>
+            )}
 
             {/* Region selection */}
             {selection && (
