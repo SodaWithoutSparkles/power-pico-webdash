@@ -520,6 +520,11 @@ export class ScopeEngine {
         }
         point.w = point.v * point.i; // recompute with zeroed values
 
+        // Auto-set T+0 to the first averaged point's raw timestamp when the
+        // ring buffer is empty, so display timestamps always start near 0.
+        if (this.ring.length === 0) {
+            this.tZeroOffsetUs = point.t;
+        }
         const displayT = point.t - this.tZeroOffsetUs;
         logIngest("ingest() point t=%s displayT=%s v=%s i=%s w=%s ringLen=%s", pkt.timestampUs, displayT, point.v.toFixed(3), point.i.toFixed(3), point.w.toFixed(3), this.ring.length);
         this.ring.push({ t: displayT, v: point.v, i: point.i, w: point.w, range: point.range });
