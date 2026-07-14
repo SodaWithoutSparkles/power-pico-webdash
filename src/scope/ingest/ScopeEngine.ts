@@ -9,6 +9,7 @@ import { DualStageIntegrator, integrateRange } from "../lib/integrator";
 import { ExtremesTracker } from "../lib/extremesTracker";
 import { sliceDisplay } from "../format/sliceDisplay";
 import { Simulator } from "./simulate";
+import { updateScaleDelta, type ScaleTier } from "../lib/hysteresis";
 import type { BucketedTelemetryData, StatusPayload } from "../types/workerTypes";
 
 
@@ -20,8 +21,12 @@ export class ScopeEngine {
 
     // ── Display rings (bucketed min/mean/max series) ──
     // All three are always the same length (same push pattern in ingestSample).
+    // Init in _createDisplayRings() and rebuilt in setDisplayWindow().
+    // @ts-expect-error
     private _displayMaxRing: TelemetryRingBuffer;
+    // @ts-expect-error
     private _displayMeanRing: TelemetryRingBuffer;
+    // @ts-expect-error
     private _displayMinRing: TelemetryRingBuffer;
     private _displayTempRing: TelemetryRingBuffer | null = null;
     private _avgWindowSize: number;
@@ -50,6 +55,22 @@ export class ScopeEngine {
      * When false, the cursor stays where you put it (decoupled / scroll mode).
      */
     followIngest = true;
+
+    // ── Scale hysteresis (Schmitt trigger, updated on getLatestWindow) ──
+
+    private _hysteresisTier: ScaleTier = "ma";
+    private _hysteresisDownTimer = 0;
+    private _hysteresisLastMs = 0;
+
+    /** Latest computed scale tier, updated during getLatestWindow. */
+    get scaleTier(): ScaleTier { return this._hysteresisTier; }
+
+    /** Reset hysteresis back to default. */
+    resetHysteresis(): void {
+        this._hysteresisTier = "ma";
+        this._hysteresisDownTimer = 0;
+        this._hysteresisLastMs = 0;
+    }
 
     private parser: PacketParser;
     private simulator: Simulator | null = null;
@@ -162,11 +183,26 @@ export class ScopeEngine {
      * Read the latest `count` display buckets.
      * When followIngest=true: snaps cursor to end first (always live).
      * When followIngest=false: reads from current cursor position (pinned).
+     *
+     * Also updates the scale hysteresis using the ring's cached peak current.
      */
     getLatestWindow(count: number): BucketedTelemetryData {
         if (this.followIngest) {
             this.setCursorToEnd();
         }
+
+        // Update scale hysteresis with real wall-clock delta
+        const now = performance.now();
+        const deltaMs = this._hysteresisLastMs > 0 ? now - this._hysteresisLastMs : 16;
+        const updated = updateScaleDelta(
+            { tier: this._hysteresisTier, downTimer: this._hysteresisDownTimer },
+            this.ring.peakCurrent,
+            deltaMs,
+        );
+        this._hysteresisTier = updated.tier;
+        this._hysteresisDownTimer = updated.downTimer;
+        this._hysteresisLastMs = now;
+
         return this.readDisplayWindow(count);
     }
 
@@ -203,6 +239,7 @@ export class ScopeEngine {
         this.parser.reset();
         this.integrator.reset();
         this.extremes.reset();
+        this.resetHysteresis();
         this.sampleCount = 0;
         this.pktPerSec = 0;
         this.pktCountSinceStatus = 0;

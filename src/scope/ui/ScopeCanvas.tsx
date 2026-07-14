@@ -57,14 +57,6 @@ function fmtTime(v: number): string {
     return v.toFixed(0) + "µs";
 }
 
-function fmtCurrent(v: number): string {
-    const a = Math.abs(v);
-    if (a >= 1) return v.toFixed(3);
-    if (a >= 0.001) return (v * 1_000).toFixed(2) + "m";
-    return (v * 1_000_000).toFixed(1) + "µ";
-}
-
-/** Format a current value (in amps) using the hysteresis tier for stable axis labels. */
 function fmtCurrentByTier(v: number, tier: import("../lib/hysteresis").ScaleTier): string {
     const scaled = tier === "ua" ? v * 1_000_000 : tier === "ma" ? v * 1_000 : v;
     const label = tierToLabel(tier);

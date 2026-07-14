@@ -1,15 +1,27 @@
-// Minimal verification UI for the scope worker engine.
+// Minimal verification UI for the scope engine.
 // Shows text readouts — no graph. Temporary; replaced in Phase C.
 
-import React from "react";
+import React, { useCallback } from "react";
 import { useScopeStore } from "../../store/scopeStore";
-import { useScopeEngineManager } from "../hooks/useScopeEngineManager";
 import clsx from "clsx";
 
 export const ScopeDebugPanel: React.FC = () => {
     const status = useScopeStore((s) => s.status);
     const latestData = useScopeStore((s) => s.latestData);
-    const engine = useScopeEngineManager();
+    const engineRef = useScopeStore((s) => s.engineRef);
+    const connectSerial = useScopeStore((s) => s.connectSerial);
+    const disconnectSerial = useScopeStore((s) => s.disconnectSerial);
+    const setStatus = useScopeStore((s) => s.setStatus);
+
+    const act = useCallback(
+        (fn: (e: import("../ingest/ScopeEngine").ScopeEngine) => void) => {
+            const e = engineRef;
+            if (!e) return;
+            fn(e);
+            setStatus(e.computeStatus());
+        },
+        [engineRef, setStatus],
+    );
 
     const isRunning = status.running;
     const mode = status.mode;
@@ -54,28 +66,28 @@ export const ScopeDebugPanel: React.FC = () => {
                 {/* Buttons */}
                 <div className="mt-6 flex flex-wrap gap-2 justify-center">
                     <button
-                        onClick={engine.startSimulate}
+                        onClick={() => act((e) => e.startSimulate())}
                         className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded text-sm font-medium transition-colors"
                     >
                         Simulate
                     </button>
                     {isRunning ? (
                         <button
-                            onClick={engine.pause}
+                            onClick={() => act((e) => e.pause())}
                             className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded text-sm font-medium transition-colors"
                         >
                             Pause
                         </button>
                     ) : (
                         <button
-                            onClick={engine.start}
+                            onClick={() => act((e) => e.start())}
                             className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded text-sm font-medium transition-colors"
                         >
                             Start
                         </button>
                     )}
                     <button
-                        onClick={engine.clear}
+                        onClick={() => act((e) => e.clear())}
                         className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded text-sm font-medium transition-colors"
                     >
                         Clear
@@ -86,14 +98,14 @@ export const ScopeDebugPanel: React.FC = () => {
                 <div className="mt-3 flex justify-center">
                     {mode === "serial" ? (
                         <button
-                            onClick={engine.disconnect}
+                            onClick={disconnectSerial}
                             className="px-4 py-2 bg-red-800 hover:bg-red-700 text-white rounded text-sm font-medium transition-colors"
                         >
                             Disconnect Serial
                         </button>
                     ) : (
                         <button
-                            onClick={engine.connectSerial}
+                            onClick={connectSerial}
                             className="px-4 py-2 bg-blue-700 hover:bg-blue-600 text-white rounded text-sm font-medium transition-colors"
                         >
                             Connect Serial

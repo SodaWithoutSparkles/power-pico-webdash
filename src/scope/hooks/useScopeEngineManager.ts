@@ -1,15 +1,10 @@
 // React hook that manages the ScopeEngine lifecycle.
-// Creates the engine on mount, runs a rAF loop for polling/hysteresis,
+// Creates the engine on mount, runs a rAF loop for polling,
 // and wires serial actions to the store.
 
 import { useEffect, useRef, useCallback } from "react";
 import { useScopeStore } from "../../store/scopeStore";
 import { ScopeEngine } from "../ingest/ScopeEngine";
-import {
-    createHysteresisState,
-    updateScaleDelta,
-    type ScaleTier,
-} from "../lib/hysteresis";
 
 /**
  * Hook that owns the scope engine on the main thread.
@@ -21,7 +16,6 @@ export function useScopeEngineManager() {
         reader: ReadableStreamDefaultReader<Uint8Array>;
         port: SerialPort;
     } | null>(null);
-    const hysteresisRef = useRef(createHysteresisState());
     const rafRef = useRef<number>(0);
     const lastDataTs = useRef(0);
     const frameCount = useRef(0);
@@ -104,7 +98,9 @@ export function useScopeEngineManager() {
         const engine = new ScopeEngine(1_000_000);
         engineRef.current = engine;
         setEngineRef(engine);
-        hysteresisRef.current = createHysteresisState();
+
+        // Apply initial config to engine
+        useScopeStore.getState().applyConfigToEngine();
 
         // Wire serial actions into the store
         const prevConnect = useScopeStore.getState().connectSerial;
@@ -116,11 +112,8 @@ export function useScopeEngineManager() {
 
         let prevTotalSamples = 0;
         let stallWarned = false;
-        let lastRafTs = performance.now();
 
         function tick(now: number) {
-            const deltaMs = now - lastRafTs;
-            lastRafTs = now;
             frameCount.current++;
 
             // 1. Update status every frame
@@ -136,13 +129,12 @@ export function useScopeEngineManager() {
             if (status.running && engine.ring.length > 0) {
                 const dataTs = now - lastDataTs.current;
                 if (dataTs >= 33 || lastDataTs.current === 0) {
-                    // ~30 fps data refresh
+                    // ~30 fps data refresh — engine.getLatestWindow also updates hysteresis internally
                     lastDataTs.current = now;
-                    const t0 = performance.now();
                     const data = engine.getLatestWindow(200);
-                    const t1 = performance.now();
 
                     setLatestData(data);
+                    setHysteresisTier(engine.scaleTier);
 
                     // Stall detection
                     if (prevTotalSamples > 0) {
@@ -157,37 +149,16 @@ export function useScopeEngineManager() {
                         }
                     }
                     prevTotalSamples = status.sampleCount;
-
-                    // 3. Hysteresis: feed the peak current from the window into the Schmitt trigger
-                    if (data.timestamps.length > 0) {
-                        // Use maxI across the latest window as the peak
-                        let peak = 0;
-                        for (let i = 0; i < data.maxI.length; i++) {
-                            if (data.maxI[i] > peak) peak = data.maxI[i];
-                        }
-                        hysteresisRef.current = updateScaleDelta(
-                            hysteresisRef.current,
-                            peak,
-                            deltaMs,
-                        );
-                        setHysteresisTier(hysteresisRef.current.tier);
-                    }
-
-                    console.log(
-                        "[perf] engine latestWindow=200" +
-                        " bucketTime=" + (t1 - t0).toFixed(1) + "ms" +
-                        " points=" + data.timestamps.length,
-                    );
                 }
             } else {
-                // Not running — reset hysteresis to default
-                hysteresisRef.current = createHysteresisState();
-                setHysteresisTier("ma" as ScaleTier);
+                // Not running — reset engine hysteresis
+                engine.resetHysteresis();
+                setHysteresisTier(engine.scaleTier);
                 lastDataTs.current = 0;
                 prevTotalSamples = 0;
             }
 
-            // 4. Session totals (~2 fps)
+            // 3. Session totals (~2 fps)
             if (frameCount.current % 30 === 0) {
                 setSessionTotals(engine.getSessionTotals());
             }

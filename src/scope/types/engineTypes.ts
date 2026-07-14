@@ -10,8 +10,9 @@ export interface ScopeChannels {
 
 export interface ScopeConfig {
     baudRate: number;
-    avgSize: number; // k: packets in the averaging window
+    avgSize: number; // k: samples per averaging window
     windowSize: number; // N: display ring capacity
+    avgMode: "simple" | "lttb";
     channels: ScopeChannels;
 }
 

@@ -17,6 +17,8 @@ export interface ScopeStoreState {
     // Config
     config: ScopeConfig;
     setConfig: (patch: Partial<ScopeConfig>) => void;
+    /** Apply buffer config to the engine. Call after avgSize/windowSize changes. */
+    applyConfigToEngine: () => void;
 
     // Status (updated by engine polling)
     status: ScopeStatus;
@@ -49,8 +51,9 @@ export interface ScopeStoreState {
 
 const defaultConfig: ScopeConfig = {
     baudRate: 115200,
-    avgSize: 5,
-    windowSize: 500,
+    avgSize: 10,
+    windowSize: 10000,
+    avgMode: "simple",
     channels: { v: true, i: true, w: true },
 };
 
@@ -66,11 +69,16 @@ const defaultStatus: ScopeStatus = {
     liveW: 0,
 };
 
-export const useScopeStore = create<ScopeStoreState>((set) => ({
+export const useScopeStore = create<ScopeStoreState>((set, get) => ({
     config: defaultConfig,
-    setConfig: (patch) => set((s) => ({ config: { ...s.config, ...patch } })),
-
     status: defaultStatus,
+    setConfig: (patch) => set((s) => ({ config: { ...s.config, ...patch } })),
+    applyConfigToEngine: () => {
+        const { config, engineRef } = get();
+        if (!engineRef) return;
+        engineRef.setDisplayWindow(config.windowSize, config.avgSize);
+        engineRef.avgMode = config.avgMode;
+    },
     setStatus: (status) => set({ status }),
 
     latestData: null,

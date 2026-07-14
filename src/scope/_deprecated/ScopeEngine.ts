@@ -19,6 +19,7 @@ const DEFAULT_CONFIG: ScopeConfig = {
     baudRate: 115200,
     avgSize: 10,
     windowSize: 1000,
+    avgMode: "simple",
     channels: { v: true, i: true, w: true },
 };
 

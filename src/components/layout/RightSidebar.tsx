@@ -68,9 +68,9 @@ export const RightSidebar: React.FC = () => {
                     <input
                         type="number"
                         min={1}
-                        max={100}
+                        max={1000}
                         value={config.avgSize}
-                        onChange={(e) => setConfig({ avgSize: Math.max(1, Number(e.target.value)) })}
+                        onChange={(e) => { setConfig({ avgSize: Math.max(1, Number(e.target.value)) }); useScopeStore.getState().applyConfigToEngine(); }}
                         className="flex-1 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
                     />
                 </div>
@@ -79,11 +79,22 @@ export const RightSidebar: React.FC = () => {
                     <input
                         type="number"
                         min={10}
-                        max={10000}
+                        max={100000}
                         value={config.windowSize}
-                        onChange={(e) => setConfig({ windowSize: Math.max(10, Number(e.target.value)) })}
+                        onChange={(e) => { setConfig({ windowSize: Math.max(10, Number(e.target.value)) }); useScopeStore.getState().applyConfigToEngine(); }}
                         className="flex-1 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
                     />
+                </div>
+                <div className="flex items-center gap-2">
+                    <label className="text-xs text-gray-400 w-20">Avg mode</label>
+                    <select
+                        value={config.avgMode}
+                        onChange={(e) => { setConfig({ avgMode: e.target.value as "simple" | "lttb" }); useScopeStore.getState().applyConfigToEngine(); }}
+                        className="flex-1 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
+                    >
+                        <option value="simple">Min-max-avg</option>
+                        <option value="lttb">LTTB</option>
+                    </select>
                 </div>
             </Section>
 
