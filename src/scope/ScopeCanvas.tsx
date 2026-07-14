@@ -4,9 +4,9 @@
 import React, { useRef, useEffect } from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
-import { useScopeStore } from "../../store/scopeStore";
-import { tierToLabel } from "../lib/hysteresis";
-import type { BucketedTelemetryData } from "../types/workerTypes";
+import { useScopeStore } from "../store/scopeStore";
+import type { BucketedTelemetryData } from "./workerTypes";
+import type { WorkerRequest } from "./workerTypes";
 
 // ── Channel styling ──
 
@@ -64,15 +64,6 @@ function fmtCurrent(v: number): string {
     return (v * 1_000_000).toFixed(1) + "µ";
 }
 
-/** Format a current value (in amps) using the hysteresis tier for stable axis labels. */
-function fmtCurrentByTier(v: number, tier: import("../lib/hysteresis").ScaleTier): string {
-    const scaled = tier === "ua" ? v * 1_000_000 : tier === "ma" ? v * 1_000 : v;
-    const label = tierToLabel(tier);
-    if (tier === "ua") return scaled.toFixed(0) + " " + label;
-    if (tier === "ma") return scaled.toFixed(2) + " " + label;
-    return scaled.toFixed(3) + " " + label;
-}
-
 // ── ScopeCanvas component ──
 
 export const ScopeCanvas: React.FC = () => {
@@ -125,12 +116,7 @@ export const ScopeCanvas: React.FC = () => {
                 { scale: "v", stroke: CHANNELS.v.stroke, width: 1.5, label: "V", value: (_, v) => (v ?? 0).toFixed(3) + " V" },       // [1] V avg
                 { scale: "v", fill: CHANNELS.v.fill, width: 0 },  // [2] V min (band, no line)
                 { scale: "v", fill: CHANNELS.v.fill, width: 0 },  // [3] V max (band, no line)
-                {
-                    scale: "i", stroke: CHANNELS.i.stroke, width: 1.5, label: "I", value: (_, v) => {
-                        const tier = useScopeStore.getState().hysteresisTier;
-                        return fmtCurrentByTier(v ?? 0, tier);
-                    }
-                },        // [4] I avg
+                { scale: "i", stroke: CHANNELS.i.stroke, width: 1.5, label: "I", value: (_, v) => fmtCurrent(v ?? 0) + " A" },        // [4] I avg
                 { scale: "i", fill: CHANNELS.i.fill, width: 0 },  // [5] I min (band, no line)
                 { scale: "i", fill: CHANNELS.i.fill, width: 0 },  // [6] I max (band, no line)
                 { scale: "w", stroke: CHANNELS.w.stroke, width: 1.5, label: "W", value: (_, v) => (v ?? 0).toFixed(3) + " W" },       // [7] W avg
@@ -179,10 +165,7 @@ export const ScopeCanvas: React.FC = () => {
                     side: 1,
                     grid: { show: false },
                     ticks: { stroke: "#4B5563", width: 0.5 },
-                    values: (_self: uPlot, ticks: number[]) => {
-                        const tier = useScopeStore.getState().hysteresisTier;
-                        return ticks.map((v) => fmtCurrentByTier(v, tier));
-                    },
+                    values: (_self: uPlot, ticks: number[]) => ticks.map(fmtCurrent),
                     size: 56,
                 },
                 {
@@ -230,10 +213,9 @@ export const ScopeCanvas: React.FC = () => {
                             const endVal = self.posToVal(left + width, "x");
                             const startTs = BigInt(Math.round(startVal));
                             const endTs = BigInt(Math.round(endVal));
-                            const { engineRef } = useScopeStore.getState();
-                            if (engineRef) {
-                                const result = engineRef.getIntegration(startTs, endTs);
-                                useScopeStore.getState().setSelection(result);
+                            const { workerRef } = useScopeStore.getState();
+                            if (workerRef) {
+                                workerRef.postMessage({ type: "get-integration", startTs, endTs } satisfies WorkerRequest);
                             }
                         }
                     },
@@ -269,10 +251,9 @@ export const ScopeCanvas: React.FC = () => {
                 const endVal = u.posToVal(left + width, "x");
                 const startTs = BigInt(Math.round(startVal));
                 const endTs = BigInt(Math.round(endVal));
-                const { engineRef } = useScopeStore.getState();
-                if (engineRef) {
-                    const result = engineRef.getIntegration(startTs, endTs);
-                    useScopeStore.getState().setSelection(result);
+                const { workerRef } = useScopeStore.getState();
+                if (workerRef) {
+                    workerRef.postMessage({ type: "get-integration", startTs, endTs } satisfies WorkerRequest);
                 }
             }
         };
@@ -321,11 +302,11 @@ export const ScopeCanvas: React.FC = () => {
         const t0 = performance.now();
         const aligned = toAlignedData(latestData);
         const t1 = performance.now();
-        // Always reset scales so the viewport tracks the current data window.
-        // With getLatestWindow returning a fixed-span window, the x-range
-        // stays stable (no accumulator growth) and y-range is consistent.
+        // Only reset scales on the first data load (auto-range axes), not on every poll
+        // This avoids jitter from constant re-ranging
+        const resetScales = !hadDataRef.current;
         hadDataRef.current = true;
-        u.setData(aligned, true);
+        u.setData(aligned, resetScales);
         const t2 = performance.now();
         console.log(
             "[perf] uPlot toAligned=" + (t1 - t0).toFixed(1) + "ms" +

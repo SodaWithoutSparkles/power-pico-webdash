@@ -88,6 +88,6 @@ export const useScopeStore = create<ScopeStoreState>((set) => ({
     engineRef: null,
     setEngineRef: (engineRef) => set({ engineRef }),
 
-    connectSerial: async () => {},
-    disconnectSerial: async () => {},
+    connectSerial: async () => { },
+    disconnectSerial: async () => { },
 }));
