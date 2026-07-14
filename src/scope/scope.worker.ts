@@ -30,9 +30,6 @@ let tZeroOffset = 0; // μs offset subtracted for display
 let serialPort: SerialPort | null = null;
 let serialReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
-// Status throttle: emit status at most every 250ms
-const STATUS_INTERVAL_MS = 250;
-
 // ── Helpers ──
 
 function emitStatus(): void {

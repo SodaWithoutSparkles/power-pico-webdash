@@ -3,9 +3,13 @@ import { Header } from './Header';
 import { LeftSidebar } from './LeftSidebar';
 import { RightSidebar } from './RightSidebar';
 import { BottomBar } from './BottomBar';
-import { ScopeDebugPanel } from '../../scope/ScopeDebugPanel';
+import { ScopeCanvas } from '../../scope/ScopeCanvas';
+import { Measurements } from '../../scope/Measurements';
+import { useScopeEngineManager } from '../../scope/useScopeEngineManager';
 
 export const MainLayout: React.FC = () => {
+    // Boot the worker engine
+    useScopeEngineManager();
     return (
         <div className="flex flex-col h-screen w-screen overflow-hidden bg-gray-900">
             {/* 1. Top Header */}
@@ -18,14 +22,19 @@ export const MainLayout: React.FC = () => {
                 <LeftSidebar />
 
                 {/* Center Canvas Area — scope graph */}
-                <div className="flex-1 bg-gray-500 relative overflow-hidden flex flex-col">
-                    <div className="flex-1 relative bg-gray-900">
-                        <ScopeDebugPanel />
-                    </div>
+                <div className="flex-1 relative overflow-hidden">
+                    <ScopeCanvas />
                 </div>
 
-                {/* Right Panels */}
-                <RightSidebar />
+                {/* Right Panel — settings + measurements */}
+                <div className="flex flex-col border-l border-gray-700">
+                    <div className="flex-1 overflow-y-auto">
+                        <RightSidebar />
+                    </div>
+                    <div className="border-t border-gray-700 p-3 bg-gray-800/50">
+                        <Measurements />
+                    </div>
+                </div>
             </div>
 
             {/* 3. Bottom Status Bar */}
