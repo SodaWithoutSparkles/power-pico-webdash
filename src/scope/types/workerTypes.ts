@@ -25,13 +25,14 @@ export interface BucketedTelemetryData {
 export interface StatusPayload {
     running: boolean;
     mode: "idle" | "serial" | "simulate";
-    pktPerSec: number;
-    sampleCount: number;
+    samplesPerSec: number;
+    observationCount: number;
     bufferFillPct: number;
     liveV: number;
     liveI: number;
     liveW: number;
     lastTimestampUs: number;
+    packetWarning: string | null;
 }
 
 

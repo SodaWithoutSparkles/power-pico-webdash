@@ -5,6 +5,7 @@
 import { useEffect, useRef, useCallback } from "react";
 import { useScopeStore } from "../../store/scopeStore";
 import { ScopeEngine } from "../ingest/ScopeEngine";
+import { useStore } from "../../store/useStore";
 
 /**
  * Hook that owns the scope engine on the main thread.
@@ -58,13 +59,26 @@ export function useScopeEngineManager() {
             const reader = port.readable!.getReader();
             serialAbortRef.current = { reader, port };
 
+            let bytesRead = 0;
+            let lastLogTs = performance.now();
             (async () => {
                 try {
                     while (true) {
                         const { value, done } = await reader.read();
                         if (done || !serialAbortRef.current) break;
                         if (!value) continue;
-                        engineRef.current?.pushSerialData(value);
+                        bytesRead += value.length;
+                        const now = performance.now();
+                        if (now - lastLogTs > 2000) {
+                            console.log('[scope] Serial reader: ' + bytesRead + ' bytes read, ' + (bytesRead / ((now - lastLogTs) / 1000)).toFixed(0) + ' B/s, engine sampleCount=' + (engineRef.current?.sampleCount ?? 0));
+                            lastLogTs = now;
+                            bytesRead = 0;
+                        }
+                        try {
+                            engineRef.current?.pushSerialData(value);
+                        } catch (err) {
+                            console.error("[scope] Error processing serial data:", err);
+                        }
                     }
                 } catch (err) {
                     console.error("[scope] Serial read error:", err);
@@ -95,9 +109,16 @@ export function useScopeEngineManager() {
     // ── Bootstrap effect ──
 
     useEffect(() => {
-        const engine = new ScopeEngine(1_000_000);
+        const cfg = useScopeStore.getState().config;
+        const engine = new ScopeEngine(cfg.ringCapacity);
+        engine.expectedSamplesPerPacket = cfg.expectedSamplesPerPacket;
+        engine.packetSmoothing = cfg.packetSmoothing;
+        engine.onPacketWarning = (msg) => {
+            useStore.getState().addNotification({ type: 'error', title: 'Packet Warning', message: msg });
+        };
         engineRef.current = engine;
         setEngineRef(engine);
+        console.log('[scope] Engine created, capacity=' + engine.ring.capacity + ' mode=' + engine.mode);
 
         // Apply initial config to engine
         useScopeStore.getState().applyConfigToEngine();
@@ -113,6 +134,8 @@ export function useScopeEngineManager() {
         let prevTotalSamples = 0;
         let stallWarned = false;
 
+        let debugLogInterval = 0;
+
         function tick(now: number) {
             frameCount.current++;
 
@@ -121,12 +144,12 @@ export function useScopeEngineManager() {
             setStatus(status);
 
             // Clear graph when buffer is cleared
-            if (status.sampleCount === 0) {
+            if (status.observationCount === 0) {
                 setLatestData(null);
             }
 
-            // 2. Fetch bucketed data (~30 fps)
-            if (status.running && engine.ring.length > 0) {
+            // 2. Fetch bucketed data (~30 fps) — runs even when paused so the graph stays alive
+            if (engine.ring.length > 0) {
                 const dataTs = now - lastDataTs.current;
                 if (dataTs >= 33 || lastDataTs.current === 0) {
                     // ~30 fps data refresh — engine.getLatestWindow also updates hysteresis internally
@@ -138,17 +161,17 @@ export function useScopeEngineManager() {
 
                     // Stall detection
                     if (prevTotalSamples > 0) {
-                        const newSamples = status.sampleCount - prevTotalSamples;
+                        const newSamples = status.observationCount - prevTotalSamples;
                         if (newSamples > 1000 && !stallWarned) {
                             console.warn(
-                                "[perf] ⚠ " + newSamples + " new samples — render may be falling behind",
+                                "[perf] ⚠ " + newSamples + " new observations — render may be falling behind",
                             );
                             stallWarned = true;
                         } else if (newSamples < 100) {
                             stallWarned = false;
                         }
                     }
-                    prevTotalSamples = status.sampleCount;
+                    prevTotalSamples = status.observationCount;
                 }
             } else {
                 // Not running — reset engine hysteresis
@@ -161,6 +184,22 @@ export function useScopeEngineManager() {
             // 3. Session totals (~2 fps)
             if (frameCount.current % 30 === 0) {
                 setSessionTotals(engine.getSessionTotals());
+            }
+
+            // 4. Periodic debug log (~1 Hz)
+            debugLogInterval++;
+            if (debugLogInterval % 60 === 0) {
+                const st = engine.computeStatus();
+                console.log(
+                    '[scope] tick mode=' + st.mode +
+                    ' running=' + st.running +
+                    ' obs=' + st.observationCount +
+                    ' fill=' + (st.bufferFillPct * 100).toFixed(1) + '%' +
+                    ' smp/s=' + st.samplesPerSec +
+                    ' ring.len=' + engine.ring.length +
+                    ' display.len=' + ((engine as any)._displayMeanRing?.length ?? 0) +
+                    ' lastDataTs=' + (lastDataTs.current > 0 ? (now - lastDataTs.current).toFixed(0) + 'ms ago' : 'never')
+                );
             }
 
             rafRef.current = requestAnimationFrame(tick);

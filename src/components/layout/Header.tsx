@@ -4,6 +4,7 @@ import { FileMenu } from './header/FileMenu';
 import { EditMenu } from './header/EditMenu';
 import { OptionsMenu } from './header/OptionsMenu';
 import { HelpMenu } from './header/HelpMenu';
+import { ZoomPreview } from '../canvas/ZoomPreview';
 
 export const Header: React.FC = () => {
     const [activeMenu, setActiveMenu] = useState<string | null>(null);
@@ -69,6 +70,10 @@ export const Header: React.FC = () => {
                 onToggle={toggleMenu}
                 onCloseMenu={() => setActiveMenu(null)}
             />
+
+            <div className="ml-auto" />
+
+            <ZoomPreview />
 
             {/* Click backdrop to close menu */}
             {activeMenu && (

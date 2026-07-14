@@ -3,11 +3,23 @@
 
 import React from "react";
 import { useScopeStore } from "../../store/scopeStore";
+import { peakToUnitValue, tierToLabel, type ScaleTier } from "../lib/hysteresis";
+
+function fmtCurrent(amps: number, tier: ScaleTier): string {
+    const scaled = peakToUnitValue(amps, tier);
+    const label = tierToLabel(tier);
+    switch (tier) {
+        case "ua": return scaled.toFixed(0) + " " + label;
+        case "ma": return scaled.toFixed(2) + " " + label;
+        case "a": return scaled.toFixed(3) + " " + label;
+    }
+}
 
 export const Measurements: React.FC = () => {
     const status = useScopeStore((s) => s.status);
     const selection = useScopeStore((s) => s.selection);
     const sessionTotals = useScopeStore((s) => s.sessionTotals);
+    const hysteresisTier = useScopeStore((s) => s.hysteresisTier);
 
     return (
         <div className="space-y-3 text-xs">
@@ -17,7 +29,7 @@ export const Measurements: React.FC = () => {
                     Live
                 </div>
                 <Row label="V" value={`${status.liveV.toFixed(3)} V`} color="text-yellow-400" />
-                <Row label="I" value={`${status.liveI.toFixed(6)} A`} color="text-cyan-400" />
+                <Row label="I" value={fmtCurrent(status.liveI, hysteresisTier)} color="text-cyan-400" />
                 <Row label="P" value={`${status.liveW.toFixed(3)} W`} color="text-fuchsia-400" />
             </div>
 

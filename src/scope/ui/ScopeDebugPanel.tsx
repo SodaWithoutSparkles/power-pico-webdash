@@ -52,8 +52,8 @@ export const ScopeDebugPanel: React.FC = () => {
 
                 {/* Readouts */}
                 <div className="space-y-2 font-mono text-sm">
-                    <Row label="Buffer" value={`${(status.bufferFillPct * 100).toFixed(1)}% full (${status.sampleCount} samples)`} />
-                    <Row label="Packet rate" value={`${status.pktPerSec} pkt/s`} />
+                    <Row label="Buffer" value={`${(status.bufferFillPct * 100).toFixed(1)}% full (${status.observationCount} obs)`} />
+                    <Row label="Sample rate" value={`${status.samplesPerSec} smp/s`} />
                     <Row label="Live V" value={`${status.liveV.toFixed(3)} V`} />
                     <Row label="Live I" value={`${status.liveI.toFixed(6)} A`} />
                     <Row label="Live P" value={`${status.liveW.toFixed(3)} W`} />

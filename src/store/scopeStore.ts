@@ -51,22 +51,27 @@ export interface ScopeStoreState {
 
 const defaultConfig: ScopeConfig = {
     baudRate: 115200,
-    avgSize: 10,
-    windowSize: 10000,
+    ringCapacity: 1_000_000,
+    avgSize: 50,
+    windowSize: 1000,
     avgMode: "simple",
     channels: { v: true, i: true, w: true },
+    nominalSampleRate: 10000,
+    expectedSamplesPerPacket: 10,
+    packetSmoothing: -1,
 };
 
 const defaultStatus: ScopeStatus = {
     running: false,
     mode: "idle",
-    pktPerSec: 0,
-    sampleCount: 0,
+    samplesPerSec: 0,
+    observationCount: 0,
     bufferFillPct: 0,
     lastTimestampUs: 0,
     liveV: 0,
     liveI: 0,
     liveW: 0,
+    packetWarning: null,
 };
 
 export const useScopeStore = create<ScopeStoreState>((set, get) => ({

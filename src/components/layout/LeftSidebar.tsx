@@ -1,11 +1,14 @@
 import React from 'react';
 import { useScopeStore } from '../../store/scopeStore';
-import { Zap, Activity, Gauge } from 'lucide-react';
+import { Zap, Activity, Gauge, Plug } from 'lucide-react';
 import clsx from 'clsx';
 
 export const LeftSidebar: React.FC = () => {
     const channels = useScopeStore((s) => s.config.channels);
     const setConfig = useScopeStore((s) => s.setConfig);
+    const status = useScopeStore((s) => s.status);
+    const connectSerial = useScopeStore((s) => s.connectSerial);
+    const disconnectSerial = useScopeStore((s) => s.disconnectSerial);
 
     const toggleChannel = (ch: 'v' | 'i' | 'w') => {
         setConfig({ channels: { ...channels, [ch]: !channels[ch] } });
@@ -16,6 +19,8 @@ export const LeftSidebar: React.FC = () => {
         { id: 'i' as const, icon: Activity, label: 'Current', color: 'text-cyan-400' },
         { id: 'w' as const, icon: Gauge, label: 'Power', color: 'text-fuchsia-400' },
     ];
+
+    const isSerial = status.mode === 'serial';
 
     return (
         <div className="w-12 bg-gray-800 border-r border-gray-700 flex flex-col items-center py-2 space-y-1 z-20">
@@ -36,8 +41,18 @@ export const LeftSidebar: React.FC = () => {
 
             <div className="w-8 h-px bg-gray-700 my-2" />
 
-            <div className="text-[10px] text-gray-500 font-mono px-1 text-center leading-tight">
-                Auto
+            {/* Serial connect */}
+            <div className="relative w-full flex justify-center">
+                <button
+                    onClick={isSerial ? disconnectSerial : connectSerial}
+                    className={clsx(
+                        'p-2 rounded hover:bg-gray-700 transition-colors',
+                        isSerial ? 'text-green-400' : 'text-gray-500',
+                    )}
+                    title={isSerial ? 'Disconnect Serial' : 'Connect Serial'}
+                >
+                    <Plug size={20} />
+                </button>
             </div>
         </div>
     );

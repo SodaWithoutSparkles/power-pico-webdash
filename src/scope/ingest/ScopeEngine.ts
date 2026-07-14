@@ -76,14 +76,20 @@ export class ScopeEngine {
     private simulator: Simulator | null = null;
 
     running = false;
+    /** When true, ingestion (serial data, pushSample) is skipped but graph rendering continues. */
+    ingestingPaused = false;
     mode: "idle" | "serial" | "simulate" = "idle";
-    pktPerSec = 0;
-    sampleCount = 0;
-    private lastStatusTs = 0;
-    private pktCountSinceStatus = 0;
+    samplesPerSec = 0;
+    sampleCount = 0; // observations pushed into ring
+    private _rateAccumStart = 0;
+    private _rateAccumCount = 0; // total raw samples received (for rate)
     tZeroOffset = 0;
     lastPacketTS = 0; // last raw packet timestamp ingested
     deltaBetweenPackets = 0; // time between last two packets (us)
+    expectedSamplesPerPacket = 100;
+    packetSmoothing = -1; // -1 = smooth entire packet
+    onPacketWarning: ((msg: string) => void) | null = null;
+    private _lastPacketWarning: string | null = null;
 
     constructor(capacity = 1_000_000, displayCapacity = 10_000, avgWindowSize = 10) {
         if (avgWindowSize < 1) throw new Error("avgWindowSize must be >= 1");
@@ -101,7 +107,7 @@ export class ScopeEngine {
         this.parser = new PacketParser();
         this.integrator = new DualStageIntegrator();
         this.extremes = new ExtremesTracker();
-        this.lastStatusTs = performance.now();
+        this._rateAccumStart = performance.now();
     }
 
     // ── Display window config ──
@@ -223,10 +229,12 @@ export class ScopeEngine {
 
     start(): void {
         this.running = true;
+        this.ingestingPaused = false;
     }
 
     pause(): void {
         this.running = false;
+        this.ingestingPaused = true;
         this.stopSimulate();
     }
 
@@ -240,15 +248,19 @@ export class ScopeEngine {
         this.integrator.reset();
         this.extremes.reset();
         this.resetHysteresis();
+        this.tZeroOffset = 0;
         this.sampleCount = 0;
-        this.pktPerSec = 0;
-        this.pktCountSinceStatus = 0;
+        this.samplesPerSec = 0;
+        this._rateAccumCount = 0;
+        this._rateAccumStart = 0;
+        this._lastPacketWarning = null;
     }
 
     disconnect(): void {
         this.running = false;
         this.mode = "idle";
         this.parser.reset();
+        this.tZeroOffset = 0;
     }
 
     startSimulate(): void {
@@ -269,12 +281,14 @@ export class ScopeEngine {
 
     // ── Data ingestion ──
 
-    /** Push a single (timestamp, voltage, current) sample directly. */
+    /** Push a single (timestamp, voltage, current) observation directly. */
     pushSample(tsUs: number, voltage: number, current: number): void {
-        this.ingestSample(tsUs, voltage, current);
+        if (this.ingestingPaused) return;
+        this.ingestObservation(tsUs, voltage, current);
     }
 
     pushSerialData(data: Uint8Array): void {
+        if (this.ingestingPaused) return;
         for (const pkt of this.parser.push(data)) {
             this._ingestDecodedPacket(pkt);
         }
@@ -282,26 +296,61 @@ export class ScopeEngine {
 
     // ── Internal ──
 
-    /** Ingest a decoded packet, distributing samples across the packet's duration. */
+    /** Ingest a decoded packet, averaging samples into observations. */
     private _ingestDecodedPacket(pkt: import("../decode/decode").DecodedPacket): void {
         this.deltaBetweenPackets = pkt.timestampUs - this.lastPacketTS;
         this.lastPacketTS = pkt.timestampUs;
+
+        // Check for undersized packet
+        if (pkt.samples.length < this.expectedSamplesPerPacket) {
+            const msg = `Packet too small: got ${pkt.samples.length} samples, expected ≥ ${this.expectedSamplesPerPacket}`;
+            this._lastPacketWarning = msg;
+            this.onPacketWarning?.(msg);
+        }
+
+        if (pkt.samples.length === 0) return;
+
+        const groupSize = this.packetSmoothing === -1
+            ? pkt.samples.length
+            : this.packetSmoothing;
+
         const dt = this.deltaBetweenPackets / pkt.samples.length;
-        let ts = pkt.timestampUs - this.deltaBetweenPackets;
-        for (const s of pkt.samples) {
-            this.ingestSample(ts + dt, s.volts, s.amps);
-            ts += dt;
+
+        // Average raw samples into observations
+        let accV = 0, accI = 0, accCount = 0;
+        // ts = first sample time in current group
+        let groupFirstTs = pkt.timestampUs - this.deltaBetweenPackets + dt;
+        // Sample k (0-indexed) gets time = pkt.timestampUs - this.deltaBetweenPackets + (k+1) * dt
+        for (let i = 0; i < pkt.samples.length; i++) {
+            const s = pkt.samples[i];
+            accV += s.volts;
+            accI += s.amps;
+            accCount++;
+            this._rateAccumCount++;
+            const tEnd = pkt.timestampUs - this.deltaBetweenPackets + (i + 1) * dt;
+
+            if (accCount >= groupSize) {
+                this.ingestObservation((groupFirstTs + tEnd) / 2, accV / accCount, accI / accCount);
+                accV = 0; accI = 0; accCount = 0;
+                // Next group starts at the NEXT sample's time
+                groupFirstTs = pkt.timestampUs - this.deltaBetweenPackets + (i + 2) * dt;
+            }
+        }
+        // Flush remaining partial group
+        if (accCount > 0) {
+            const lastTs = pkt.timestampUs - this.deltaBetweenPackets + pkt.samples.length * dt;
+            this.ingestObservation((groupFirstTs + lastTs) / 2, accV / accCount, accI / accCount);
         }
     }
 
-    private ingestSample(tsUs: number, voltage: number, current: number): void {
-        const adjustedTs = BigInt(tsUs) - BigInt(this.tZeroOffset);
+    private ingestObservation(tsUs: number, voltage: number, current: number): void {
+        const adjustedTs = BigInt(Math.round(tsUs)) - BigInt(Math.round(this.tZeroOffset));
         this.ring.push(adjustedTs, voltage, current);
         this.integrator.push(adjustedTs, voltage, current);
         this.extremes.push(adjustedTs, voltage, current);
         this._pushToDisplayRings(adjustedTs, voltage, current);
         this.sampleCount++;
-        this.pktCountSinceStatus++;
+        this._rateAccumCount++;
 
         // Advance cursor to head when following live; otherwise clamp to valid range
         if (this.followIngest) {
@@ -381,28 +430,35 @@ export class ScopeEngine {
     /** Latest status snapshot. Call once per frame. */
     computeStatus(): StatusPayload {
         const now = performance.now();
-        const dtMs = now - this.lastStatusTs;
-        if (dtMs > 0) {
-            this.pktPerSec = Math.round((this.pktCountSinceStatus / dtMs) * 1000);
+
+        // Smooth samples/s over ~800ms to avoid jitter
+        if (this._rateAccumStart === 0) this._rateAccumStart = now;
+        const dtMs = now - this._rateAccumStart;
+        if (dtMs >= 800) {
+            this.samplesPerSec = Math.round((this._rateAccumCount / dtMs) * 1000);
+            this._rateAccumStart = now;
+            this._rateAccumCount = 0;
         }
-        this.lastStatusTs = now;
-        this.pktCountSinceStatus = 0;
 
         const len = this.ring.length;
         const lastIdx = this.ring.lastIdx;
         const liveV = len > 0 ? this.ring.voltages[lastIdx] : 0;
         const liveI = len > 0 ? this.ring.currents[lastIdx] : 0;
 
+        const pw = this._lastPacketWarning;
+        this._lastPacketWarning = null;
+
         return {
             running: this.running,
             mode: this.mode,
-            pktPerSec: this.pktPerSec,
-            sampleCount: this.sampleCount,
+            samplesPerSec: this.samplesPerSec,
+            observationCount: this.sampleCount,
             bufferFillPct: this.ring.fillPct,
             liveV,
             liveI,
             liveW: liveV * liveI,
             lastTimestampUs: len > 0 ? Number(this.ring.timestamps[lastIdx]) : 0,
+            packetWarning: pw,
         };
     }
 

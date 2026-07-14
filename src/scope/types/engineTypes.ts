@@ -10,10 +10,14 @@ export interface ScopeChannels {
 
 export interface ScopeConfig {
     baudRate: number;
-    avgSize: number; // k: samples per averaging window
+    ringCapacity: number; // raw ring buffer capacity (applies after reconnect)
+    avgSize: number; // k: observations per display bucket
     windowSize: number; // N: display ring capacity
     avgMode: "simple" | "lttb";
     channels: ScopeChannels;
+    nominalSampleRate: number; // user-expected samples/s, used for time-based UX
+    expectedSamplesPerPacket: number; // expected raw samples per device packet
+    packetSmoothing: number; // -1=smooth whole packet, else group size (must divide expectedSamplesPerPacket)
 }
 
 export type ScopeMode = "idle" | "serial" | "simulate";
@@ -21,13 +25,14 @@ export type ScopeMode = "idle" | "serial" | "simulate";
 export interface ScopeStatus {
     running: boolean;
     mode: ScopeMode;
-    pktPerSec: number;
-    sampleCount: number;
+    samplesPerSec: number;
+    observationCount: number;
     bufferFillPct: number;
     lastTimestampUs: number; // raw device timestamp of latest packet
     liveV: number;
     liveI: number;
     liveW: number;
+    packetWarning: string | null;
 }
 
 // ── Scale / hysteresis ──
