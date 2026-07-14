@@ -6,6 +6,8 @@ import { PacketParser } from "../decode/decode";
 import { TelemetryRingBuffer } from "../ring/TelemetryRingBuffer";
 import { calculateBuckets } from "../lib/bucket";
 import { DualStageIntegrator, integrateRange } from "../lib/integrator";
+import { ExtremesTracker } from "../lib/extremesTracker";
+import { sliceDisplay } from "../format/sliceDisplay";
 import { Simulator } from "./simulate";
 import type { BucketedTelemetryData, StatusPayload } from "../types/workerTypes";
 
@@ -13,6 +15,7 @@ import type { BucketedTelemetryData, StatusPayload } from "../types/workerTypes"
 export class ScopeEngine {
     readonly ring: TelemetryRingBuffer;
     readonly integrator: DualStageIntegrator;
+    readonly extremes: ExtremesTracker;
     avgMode: "simple" | "lttb" = "simple";
 
     // ── Display rings (bucketed min/mean/max series) ──
@@ -24,12 +27,32 @@ export class ScopeEngine {
     private _avgWindowSize: number;
     private _displayCapacity: number;
 
-    // Cursor into the display rings (logical index, 0 = oldest, length = past-the-end).
-    private _cursor = 0;
+    /**
+     * Cursor offset from the TAIL (oldest data).
+     *   0          = oldest element in the display ring.
+     *   len        = past-the-end (at head / newest).
+     *
+     * When followIngest=true, _cursorOffset is set to len after every ingest
+     * (cursor always at the newest data).
+     *
+     * When followIngest=false, _cursorOffset stays pinned. New data fills in
+     * at the head; the cursor remains at the same logical position from tail
+     * so the visible window is pinned to the same portion of the trace.
+     * Once the ring wraps, tail advances and the window slides forward.
+     *
+     * Uses sentinel -1 for "not explicitly moved"; readDisplayWindow treats it as len.
+     */
+    private _cursorOffset = -1;
+
+    /**
+     * When true (default), the display cursor snaps to the newest data
+     * after every ingest — the window always shows live data.
+     * When false, the cursor stays where you put it (decoupled / scroll mode).
+     */
+    followIngest = true;
 
     private parser: PacketParser;
     private simulator: Simulator | null = null;
-    private simulateInterval: ReturnType<typeof setInterval> | null = null;
 
     running = false;
     mode: "idle" | "serial" | "simulate" = "idle";
@@ -50,13 +73,13 @@ export class ScopeEngine {
 
         this._avgWindowSize = avgWindowSize;
         this._displayCapacity = displayCapacity;
-        this.ring = new TelemetryRingBuffer(capacity);
-        this._displayMaxRing = new TelemetryRingBuffer(displayCapacity);
-        this._displayMeanRing = new TelemetryRingBuffer(displayCapacity);
-        this._displayMinRing = new TelemetryRingBuffer(displayCapacity);
-        this._displayTempRing = avgWindowSize > 1 ? new TelemetryRingBuffer(avgWindowSize) : null;
+        this.ring = new TelemetryRingBuffer(capacity, {
+            trackExtremes: { current: { peak: true, min: true, max: true } },
+        });
+        this._createDisplayRings(displayCapacity, avgWindowSize);
         this.parser = new PacketParser();
         this.integrator = new DualStageIntegrator();
+        this.extremes = new ExtremesTracker();
         this.lastStatusTs = performance.now();
     }
 
@@ -72,40 +95,55 @@ export class ScopeEngine {
 
         this._avgWindowSize = avgWindowSize;
         this._displayCapacity = displayCapacity;
-        this._displayMaxRing = new TelemetryRingBuffer(displayCapacity);
-        this._displayMeanRing = new TelemetryRingBuffer(displayCapacity);
-        this._displayMinRing = new TelemetryRingBuffer(displayCapacity);
-        this._displayTempRing = avgWindowSize > 1 ? new TelemetryRingBuffer(avgWindowSize) : null;
-        this._cursor = 0;
+        this._createDisplayRings(displayCapacity, avgWindowSize);
+        this._cursorOffset = -1;
+
+        // Replay existing raw data into the new display rings
+        this._replayRawRing();
     }
+
+
 
     get avgWindowSize(): number { return this._avgWindowSize; }
     get displayCapacity(): number { return this._displayCapacity; }
 
     // ── Display cursor ──
 
-    /** Move cursor to the end (newest data). */
-    setCursorToEnd(): void {
-        this._cursor = this._displayMeanRing.length;
+    /** Resolve the effective cursor offset. Sentinel -1 = always at end. */
+    private _effectiveOffset(): number {
+        const len = this._displayMeanRing.length;
+        if (len === 0) return 0;
+        if (this._cursorOffset < 0) return len;
+        return Math.min(this._cursorOffset, len);
     }
 
-    /** Move cursor to a fraction of the display ring: 0.0 = oldest, 1.0 = newest. */
+    /** Move cursor to the newest data (offset = len, i.e. at head). */
+    setCursorToEnd(): void {
+        this._cursorOffset = this._displayMeanRing.length;
+    }
+
+    /**
+     * Move cursor to a fraction of the display ring: 0.0 = oldest, 1.0 = newest.
+     */
     setCursorToFraction(f: number): void {
         const len = this._displayMeanRing.length;
-        if (len === 0) { this._cursor = 0; return; }
-        this._cursor = Math.max(0, Math.min(len, Math.round(f * len)));
+        if (len === 0) { this._cursorOffset = 0; return; }
+        const clamped = Math.max(0, Math.min(1, f));
+        this._cursorOffset = Math.round(clamped * len);
     }
 
     /** Current cursor position as a fraction [0, 1]. 1 = newest. */
     getCursorFraction(): number {
         const len = this._displayMeanRing.length;
-        return len > 0 ? this._cursor / len : 0;
+        const off = this._effectiveOffset();
+        return len > 0 ? off / len : 0;
     }
 
     // ── Reading from display rings ──
 
     /**
-     * Read up to `count` display buckets ending at the cursor.
+     * Read up to `count` display buckets ending at the cursor position.
+     * Cursor is clamped to [0, len]. Sentinel -1 defaults to len (newest).
      * Returns points in chronological order.
      */
     readDisplayWindow(count: number): BucketedTelemetryData {
@@ -113,19 +151,22 @@ export class ScopeEngine {
         const len = this._displayMeanRing.length;
         if (len === 0) return this._emptyBuckets();
 
-        const start = Math.max(0, this._cursor - count);
-        const actualCount = this._cursor - start;
-        if (actualCount <= 0) return this._emptyBuckets();
+        const cursor = this._effectiveOffset();
+        const start = Math.max(0, cursor - count);
+        if (start >= cursor) return this._emptyBuckets();
 
-        return this._sliceDisplay(start, this._cursor);
+        return this._sliceDisplay(start, cursor);
     }
 
     /**
-     * Convenience: read the latest `count` display buckets (live view).
-     * Equivalent to setCursorToEnd() + readDisplayWindow(count).
+     * Read the latest `count` display buckets.
+     * When followIngest=true: snaps cursor to end first (always live).
+     * When followIngest=false: reads from current cursor position (pinned).
      */
     getLatestWindow(count: number): BucketedTelemetryData {
-        this.setCursorToEnd();
+        if (this.followIngest) {
+            this.setCursorToEnd();
+        }
         return this.readDisplayWindow(count);
     }
 
@@ -150,7 +191,7 @@ export class ScopeEngine {
 
     pause(): void {
         this.running = false;
-        this.stopSimulateInternal();
+        this.stopSimulate();
     }
 
     clear(): void {
@@ -158,9 +199,10 @@ export class ScopeEngine {
         this._displayMaxRing.clear();
         this._displayMeanRing.clear();
         this._displayMinRing.clear();
-        this._cursor = 0;
+        this._cursorOffset = -1;
         this.parser.reset();
         this.integrator.reset();
+        this.extremes.reset();
         this.sampleCount = 0;
         this.pktPerSec = 0;
         this.pktCountSinceStatus = 0;
@@ -173,37 +215,14 @@ export class ScopeEngine {
     }
 
     startSimulate(): void {
-        this.simulator = new Simulator(1000, 10, 0.5); // 1000 pkt/s, 10 samples/pkt, 0.5 Hz sine wave
+        this.simulator = new Simulator(1000, 10, 0.5);
         this.mode = "simulate";
         this.running = true;
-
-        if (this.simulateInterval) clearInterval(this.simulateInterval);
-        this.simulateInterval = setInterval(() => {
-            if (!this.running || !this.simulator) return;
-            const pkt = this.simulator.next();
-            const packets = [pkt];
-            for (const p of packets) {
-                this.deltaBetweenPackets = p.timestampUs - this.lastPacketTS;
-                this.lastPacketTS = p.timestampUs;
-                const deltaBetweenSamples = this.deltaBetweenPackets / p.samples.length;
-                let rollingSampleTs = p.timestampUs - this.deltaBetweenPackets;
-                for (const s of p.samples) {
-                    this.ingestSample(rollingSampleTs + deltaBetweenSamples, s.volts, s.amps);
-                    rollingSampleTs += deltaBetweenSamples;
-                }
-            }
-        }, 1000 / this.simulator.pktRateHz);
+        this.simulator.startLoop((pkt) => this._ingestDecodedPacket(pkt));
     }
 
     stopSimulate(): void {
-        this.stopSimulateInternal();
-    }
-
-    private stopSimulateInternal(): void {
-        if (this.simulateInterval !== null) {
-            clearInterval(this.simulateInterval);
-            this.simulateInterval = null;
-        }
+        this.simulator?.stopLoop();
         this.simulator = null;
         if (this.mode === "simulate") {
             this.mode = "idle";
@@ -211,69 +230,103 @@ export class ScopeEngine {
         }
     }
 
-    // ── Serial data ingestion ──
+    // ── Data ingestion ──
+
+    /** Push a single (timestamp, voltage, current) sample directly. */
+    pushSample(tsUs: number, voltage: number, current: number): void {
+        this.ingestSample(tsUs, voltage, current);
+    }
 
     pushSerialData(data: Uint8Array): void {
-        const packets = this.parser.push(data);
-        for (const pkt of packets) {
-            this.deltaBetweenPackets = pkt.timestampUs - this.lastPacketTS;
-            this.lastPacketTS = pkt.timestampUs;
-            const deltaBetweenSamples = this.deltaBetweenPackets / pkt.samples.length;
-            let rollingSampleTs = pkt.timestampUs - this.deltaBetweenPackets;
-            for (const s of pkt.samples) {
-                this.ingestSample(rollingSampleTs + deltaBetweenSamples, s.volts, s.amps);
-                rollingSampleTs += deltaBetweenSamples;
-            }
+        for (const pkt of this.parser.push(data)) {
+            this._ingestDecodedPacket(pkt);
         }
     }
 
     // ── Internal ──
 
+    /** Ingest a decoded packet, distributing samples across the packet's duration. */
+    private _ingestDecodedPacket(pkt: import("../decode/decode").DecodedPacket): void {
+        this.deltaBetweenPackets = pkt.timestampUs - this.lastPacketTS;
+        this.lastPacketTS = pkt.timestampUs;
+        const dt = this.deltaBetweenPackets / pkt.samples.length;
+        let ts = pkt.timestampUs - this.deltaBetweenPackets;
+        for (const s of pkt.samples) {
+            this.ingestSample(ts + dt, s.volts, s.amps);
+            ts += dt;
+        }
+    }
+
     private ingestSample(tsUs: number, voltage: number, current: number): void {
         const adjustedTs = BigInt(tsUs) - BigInt(this.tZeroOffset);
         this.ring.push(adjustedTs, voltage, current);
         this.integrator.push(adjustedTs, voltage, current);
-        this._displayTempRing?.push(adjustedTs, voltage, current);
+        this.extremes.push(adjustedTs, voltage, current);
+        this._pushToDisplayRings(adjustedTs, voltage, current);
         this.sampleCount++;
         this.pktCountSinceStatus++;
 
-        if (this._avgWindowSize === 1) {
-            this._displayMaxRing.push(adjustedTs, voltage, current);
-            this._displayMeanRing.push(adjustedTs, voltage, current);
-            this._displayMinRing.push(adjustedTs, voltage, current);
-        } else if (this._displayTempRing && this._displayTempRing.length >= this._avgWindowSize) {
-            const lastTs = this._displayTempRing.timestamps[this._displayTempRing.lastIdx];
-            const bucketedV = calculateBuckets(this._displayTempRing.voltages, 1, this.avgMode)[0];
-            const bucketedI = calculateBuckets(this._displayTempRing.currents, 1, this.avgMode)[0];
-            this._displayMaxRing.push(lastTs, bucketedV.max, bucketedI.max);
-            this._displayMeanRing.push(lastTs, bucketedV.avg, bucketedI.avg);
-            this._displayMinRing.push(lastTs, bucketedV.min, bucketedI.min);
+        // Advance cursor to head when following live; otherwise clamp to valid range
+        if (this.followIngest) {
+            this._cursorOffset = this._displayMeanRing.length;
+        } else if (this._cursorOffset >= 0) {
+            this._cursorOffset = Math.min(this._cursorOffset, this._displayMeanRing.length);
         }
+    }
+
+    /** Push a single sample through the averaging pipeline into the display rings. */
+    private _pushToDisplayRings(ts: bigint, v: number, i: number): void {
+        if (this._avgWindowSize === 1) {
+            this._displayMaxRing.push(ts, v, i);
+            this._displayMeanRing.push(ts, v, i);
+            this._displayMinRing.push(ts, v, i);
+            return;
+        }
+
+        if (!this._displayTempRing) return;
+        this._displayTempRing.push(ts, v, i);
+        if (this._displayTempRing.length < this._avgWindowSize) return;
+
+        const lastTs = this._displayTempRing.timestamps[this._displayTempRing.lastIdx];
+        const bucketedV = calculateBuckets(this._displayTempRing.voltages, 1, this.avgMode)[0];
+        const bucketedI = calculateBuckets(this._displayTempRing.currents, 1, this.avgMode)[0];
+        this._displayMaxRing.push(lastTs, bucketedV.max, bucketedI.max);
+        this._displayMeanRing.push(lastTs, bucketedV.avg, bucketedI.avg);
+        this._displayMinRing.push(lastTs, bucketedV.min, bucketedI.min);
+        this._displayTempRing.clear();
     }
 
     /** Slice the logical range [start, end) across all three display rings into a BucketedTelemetryData. */
     private _sliceDisplay(start: number, end: number): BucketedTelemetryData {
-        const maxData = this._displayMaxRing.slice(
-            (this._displayMaxRing.tailIdx + start) % this._displayMaxRing.capacity,
-            (this._displayMaxRing.tailIdx + end) % this._displayMaxRing.capacity,
-        );
-        const meanData = this._displayMeanRing.slice(
-            (this._displayMeanRing.tailIdx + start) % this._displayMeanRing.capacity,
-            (this._displayMeanRing.tailIdx + end) % this._displayMeanRing.capacity,
-        );
-        const minData = this._displayMinRing.slice(
-            (this._displayMinRing.tailIdx + start) % this._displayMinRing.capacity,
-            (this._displayMinRing.tailIdx + end) % this._displayMinRing.capacity,
-        );
-        return {
-            timestamps: Float64Array.from(meanData.timestamps, (ts) => Number(ts)),
-            avgV: meanData.voltages,
-            minV: minData.voltages,
-            maxV: maxData.voltages,
-            avgI: meanData.currents,
-            minI: minData.currents,
-            maxI: maxData.currents,
-        };
+        return sliceDisplay(this._displayMaxRing, this._displayMeanRing, this._displayMinRing, start, end);
+    }
+
+    /** Create the three display rings and optional temp ring with standard options. */
+    private _createDisplayRings(capacity: number, avgWindowSize: number): void {
+        this._displayMaxRing = new TelemetryRingBuffer(capacity, {
+            trackExtremes: { current: { max: true } },
+        });
+        this._displayMeanRing = new TelemetryRingBuffer(capacity);
+        this._displayMinRing = new TelemetryRingBuffer(capacity, {
+            trackExtremes: { current: { min: true } },
+        });
+        this._displayTempRing = avgWindowSize > 1 ? new TelemetryRingBuffer(avgWindowSize) : null;
+    }
+
+    /** Walk the raw ring and re-populate display rings. Call after creating new display rings. */
+    private _replayRawRing(): void {
+        const len = this.ring.length;
+        if (len === 0) return;
+        const tail = this.ring.tailIdx;
+        const cap = this.ring.capacity;
+        for (let i = 0; i < len; i++) {
+            const idx = (tail + i) % cap;
+            this._pushToDisplayRings(
+                this.ring.timestamps[idx],
+                this.ring.voltages[idx],
+                this.ring.currents[idx],
+            );
+        }
     }
 
     // ── T+0 offset ──
@@ -299,7 +352,7 @@ export class ScopeEngine {
         this.pktCountSinceStatus = 0;
 
         const len = this.ring.length;
-        const lastIdx = len > 0 ? (this.ring.headIdx === 0 ? this.ring.capacity - 1 : this.ring.headIdx - 1) : 0;
+        const lastIdx = this.ring.lastIdx;
         const liveV = len > 0 ? this.ring.voltages[lastIdx] : 0;
         const liveI = len > 0 ? this.ring.currents[lastIdx] : 0;
 
@@ -316,19 +369,13 @@ export class ScopeEngine {
         };
     }
 
-    /** Peak current across the entire ring buffer (used for hysteresis). */
+    /** Peak current across the entire ring buffer (used for hysteresis). Uses cached ring value. */
     computePeakCurrent(): number {
-        let peak = 0;
-        const len = this.ring.length;
-        if (len === 0) return 0;
-        const tail = this.ring.tailIdx;
-        const cap = this.ring.capacity;
-        for (let i = 0; i < len; i++) {
-            const idx = (tail + i) % cap;
-            const a = Math.abs(this.ring.currents[idx]);
-            if (a > peak) peak = a;
-        }
-        return peak;
+        return this.ring.peakCurrent;
+    }
+
+    getExtremes(): { minV: number; maxV: number; minI: number; maxI: number } {
+        return this.extremes.getExtremes();
     }
 
     // ── Helpers ──

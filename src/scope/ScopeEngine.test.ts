@@ -1,11 +1,200 @@
-import { test } from "node:test";
+import { test, expect } from 'bun:test';
 import assert from "node:assert/strict";
 
-import { ScopeEngine } from "./ScopeEngine.ts";
-import { DisplayRingBuffer } from "./DisplayRingBuffer.ts";
-import { AveragingBuffer } from "./AveragingBuffer.ts";
-import { Simulator } from "./simulate.ts";
-import { decodePacket, type DecodedPacket } from "./decode.ts";
+import { ScopeEngine } from "./ingest/ScopeEngine.ts";
+import { Simulator } from "./ingest/simulate.ts";
+import { decodePacket, type DecodedPacket } from "./decode/decode.ts";
+
+
+// ── ScopeEngine tests ──
+
+let _testTs = 0;
+
+function resetTs(): void { _testTs = 0; }
+
+/** Push `count` samples with globally monotonic timestamps. Returns the injected timestamps. */
+function injectSamples(e: ScopeEngine, count: number): number[] {
+    const result: number[] = [];
+    for (let k = 0; k < count; k++) {
+        e.pushSample(_testTs, _testTs * 2, _testTs * 3);
+        result.push(_testTs);
+        _testTs++;
+    }
+    return result;
+}
+
+test("ScopeEngine: averaging produces display bucket after avgWindowSize samples", () => {
+    const e = new ScopeEngine(1000, 10, 3); // avgWindowSize=3
+    e.start();
+
+    e.pushSample(0, 1, 0);
+    e.pushSample(1, 2, 0);
+    // temp ring has 2/3 — display ring still empty
+    assert.equal(e.getLatestWindow(10).timestamps.length, 0);
+
+    e.pushSample(2, 3, 0); // temp ring hits 3 → flushes a bucket
+    const w = e.getLatestWindow(10);
+    assert.equal(w.timestamps.length, 1);
+    assert.equal(w.avgV[0], 2); // (1+2+3)/3
+    assert.equal(w.maxV[0], 3);
+    assert.equal(w.minV[0], 1);
+
+    // Push 3 more → second bucket
+    e.pushSample(3, 10, 0);
+    e.pushSample(4, 20, 0);
+    e.pushSample(5, 30, 0);
+    assert.equal(e.getLatestWindow(10).timestamps.length, 2);
+
+    e.pause();
+});
+
+test("ScopeEngine: avgWindowSize=1 streams every sample directly", () => {
+    const e = new ScopeEngine(1000, 10, 1);
+    e.start();
+
+    e.pushSample(10, 5, 1);
+    e.pushSample(20, 7, 2);
+
+    const w = e.getLatestWindow(10);
+    assert.equal(w.timestamps.length, 2);
+    assert.equal(w.avgV[0], 5);
+    assert.equal(w.avgV[1], 7);
+    assert.equal(w.avgI[0], 1);
+    assert.equal(w.avgI[1], 2);
+
+    e.pause();
+});
+
+test("ScopeEngine: T+0 offset shifts display timestamps", () => {
+    const e = new ScopeEngine(1000, 10, 1);
+    e.setTZero(1000);
+    e.start();
+
+    e.pushSample(1000, 5, 0);
+    const w = e.getLatestWindow(10);
+    assert.equal(w.timestamps[0], 0); // 1000 - 1000 = 0
+
+    e.pause();
+});
+
+test("ScopeEngine: clear empties display rings", () => {
+    const e = new ScopeEngine(1000, 10, 1);
+    e.start();
+
+    e.pushSample(0, 1, 0);
+    assert.equal(e.getLatestWindow(10).timestamps.length, 1);
+
+    e.clear();
+    assert.equal(e.getLatestWindow(10).timestamps.length, 0);
+
+    e.pause();
+});
+
+test("ScopeEngine: followIngest=true always returns latest window", () => {
+    resetTs();
+    const e = new ScopeEngine(1000, 10, 1);
+    e.start();
+    e.followIngest = true;
+
+    injectSamples(e, 5);
+    // followIngest → cursor snaps to end → getLatestWindow returns latest
+    let w = e.getLatestWindow(10);
+    assert.equal(w.timestamps.length, 5);
+    assert.equal(w.timestamps[w.timestamps.length - 1], 4); // last = newest
+
+    injectSamples(e, 1);  // push 1 more, total 6
+    w = e.getLatestWindow(10);
+    assert.equal(w.timestamps.length, 6);
+    assert.equal(w.timestamps[w.timestamps.length - 1], 5); // newest
+
+    injectSamples(e, 4);  // total 10
+    w = e.getLatestWindow(10);
+    assert.equal(w.timestamps.length, 10);
+    assert.equal(w.timestamps[w.timestamps.length - 1], 9); // newest
+
+    e.pause();
+});
+
+test("ScopeEngine: followIngest=false pins window to trace", () => {
+    resetTs();
+    const e = new ScopeEngine(1000, 20, 1); // display=20, enough room
+    e.start();
+    e.followIngest = false;
+
+    injectSamples(e, 10);
+    e.setCursorToEnd(); // explicitly pin cursor to end (offset=len)
+    // getLatestWindow reads from cursor when !followIngest
+    let w = e.getLatestWindow(10);
+    assert.equal(w.timestamps.length, 10); // len=10, cursor=10, reads [0,10)
+    const t1 = Array.from(w.timestamps);
+    assert.deepEqual(t1, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+
+    injectSamples(e, 5); // total 15
+    // cursor offset stays 10 (pinned) — window still shows [0, 10)
+    w = e.getLatestWindow(10);
+    assert.deepEqual(Array.from(w.timestamps), t1, "window pinned to trace");
+    e.pause();
+});
+
+test("ScopeEngine: followIngest=false caps at end of raw trace", () => {
+    resetTs();
+    const e = new ScopeEngine(30, 10, 1); // display capacity=10
+    e.start();
+    e.followIngest = false;
+
+    injectSamples(e, 15); // display wrapped once: tail has advanced
+    // Pin cursor to end, then scroll to 50%
+    e.setCursorToEnd();
+    e.setCursorToFraction(0.5);
+    // offset=5, cursor=5, reads [0, 5)
+    let w = e.getLatestWindow(10);
+    assert.equal(w.timestamps.length, 5);
+    const t1 = Array.from(w.timestamps);
+
+    injectSamples(e, 5); // total 20: display wrapped more, tail advanced
+    // cursor offset stays 5 from tail → reads from NEW tail → different data
+    w = e.getLatestWindow(10);
+    const t2 = Array.from(w.timestamps);
+    // t2 should be "newer" than t1 since cursor is same offset from advanced tail
+    assert.ok(t2[0] > t1[0], "window advanced because trace end moved");
+    e.pause();
+});
+
+
+test("ScopeEngine: setDisplayWindow reconfigures display rings", () => {
+    const e = new ScopeEngine(1000, 10, 1);
+    e.start();
+
+    e.pushSample(0, 1, 0);
+    e.pushSample(1, 2, 0);
+    assert.equal(e.getLatestWindow(10).timestamps.length, 2);
+
+    // Rebuild display rings with smaller capacity — replays from raw ring
+    e.setDisplayWindow(3, 1);
+    assert.equal(e.getLatestWindow(10).timestamps.length, 2, "replayed from raw ring");
+
+    e.pushSample(2, 3, 0);
+    e.pushSample(3, 4, 0);
+    e.pushSample(4, 5, 0);
+    e.pushSample(5, 6, 0); // pushes out first two samples (only capacity 3)
+    assert.equal(e.getLatestWindow(10).timestamps.length, 3);
+    assert.deepEqual(Array.from(e.getLatestWindow(10).timestamps), [3, 4, 5]);
+
+    e.pause();
+});
+
+
+// ── Simulator test ──
+
+test("Simulator: advances timestamp and produces packets", () => {
+    const sim = new Simulator(10, 1, 1);
+    const a = sim.next();
+    const b = sim.next();
+    assert.equal(b.timestampUs - a.timestampUs, 100_000); // 1/10 Hz → 100k μs
+    assert.ok(a.samples[0].volts > 0);
+});
+
+// ── Decode round-trip test ──
 
 function pkt(tsUs: number, volts: number, amps: number): DecodedPacket {
     return {
@@ -14,96 +203,6 @@ function pkt(tsUs: number, volts: number, amps: number): DecodedPacket {
         samples: [{ range: 1, volAdc: 0, curAdc: 0, refAdc: 0, volts, amps }],
     };
 }
-
-test("AveragingBuffer: emits null until window full, then averages", () => {
-    const ab = new AveragingBuffer(3);
-    assert.equal(ab.push(pkt(0, 1, 0)), null);
-    assert.equal(ab.push(pkt(1, 2, 0)), null);
-    const p = ab.push(pkt(2, 3, 0));
-    assert.ok(p);
-    assert.equal(p!.v, 2); // (1+2+3)/3
-    assert.equal(p!.t, 2);
-});
-
-test("AveragingBuffer: slides window (FIFO)", () => {
-    const ab = new AveragingBuffer(2);
-    ab.push(pkt(0, 10, 0));
-    const p = ab.push(pkt(1, 20, 0));
-    assert.equal(p!.v, 15); // only last 2
-});
-
-test("DisplayRingBuffer: scrolling overwrite + chronological snapshot", () => {
-    const ring = new DisplayRingBuffer(3);
-    ring.push({ t: 1, v: 1, i: 0, w: 0 });
-    ring.push({ t: 2, v: 2, i: 0, w: 0 });
-    ring.push({ t: 3, v: 3, i: 0, w: 0 });
-    ring.push({ t: 4, v: 4, i: 0, w: 0 }); // overwrites t=1
-    const s = ring.snapshot();
-    assert.deepEqual(Array.from(s.t), [2, 3, 4]);
-    assert.equal(ring.fillPct, 1);
-});
-
-test("DisplayRingBuffer: resize preserves recent points", () => {
-    const ring = new DisplayRingBuffer(5);
-    for (let k = 0; k < 5; k++) ring.push({ t: k, v: k, i: 0, w: 0 });
-    ring.resize(3);
-    const s = ring.snapshot();
-    assert.deepEqual(Array.from(s.t), [2, 3, 4]);
-});
-
-test("Simulator: advances timestamp and produces packets", () => {
-    const sim = new Simulator(10, 1, 1);
-    const a = sim.next();
-    const b = sim.next();
-    assert.equal(b.timestampUs - a.timestampUs, 100_000); // 1/10 Hz
-    assert.ok(a.samples[0].volts > 0);
-});
-
-test("ScopeEngine: averaging pipeline fills ring after k packets", () => {
-    const e = new ScopeEngine();
-    e.setConfig({ avgSize: 2, windowSize: 10 });
-    e.start();
-    e.pushPacket(pkt(0, 2, 1));
-    e.pushPacket(pkt(1, 4, 1));
-    const s = e.snapshot();
-    assert.equal(s.t.length, 1);
-    assert.equal(s.v[0], 3); // (2+4)/2
-    assert.equal(s.w[0], 3); // v*i
-    e.pause();
-});
-
-test("ScopeEngine: T+0 offset shifts displayed x", () => {
-    const e = new ScopeEngine();
-    e.setConfig({ avgSize: 1, windowSize: 10 });
-    e.setTZero(1000);
-    e.start();
-    e.pushPacket(pkt(1000, 5, 1));
-    const s = e.snapshot();
-    assert.equal(s.t[0], 0); // 1000 - 1000
-    e.pause();
-});
-
-test("ScopeEngine: backward jump > 1s auto-shifts T+0", () => {
-    const e = new ScopeEngine();
-    e.setConfig({ avgSize: 1, windowSize: 10 });
-    e.start();
-    e.pushPacket(pkt(5_000_000, 5, 1));
-    e.pushPacket(pkt(1000, 5, 1)); // jump back > 1s
-    const s = e.snapshot();
-    // second point displayT = 1000 - (5_000_000 - 1000) = -4_999_000
-    assert.equal(s.t[1], 1000 - (5_000_000 - 1000));
-    e.pause();
-});
-
-test("ScopeEngine: clear empties ring", () => {
-    const e = new ScopeEngine();
-    e.setConfig({ avgSize: 1, windowSize: 10 });
-    e.start();
-    e.pushPacket(pkt(0, 5, 1));
-    e.clear();
-    assert.equal(e.snapshot().t.length, 0);
-    e.pause();
-});
 
 test("decodePacket round-trips through buildPacket helper", () => {
     const buf = new Uint8Array(11 + 7);

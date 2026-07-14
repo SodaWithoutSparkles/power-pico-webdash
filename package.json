@@ -5,10 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview"
+    "build": "vite build",
+    "typecheck": "tsc",
+    "preview": "vite preview",
+    "test": "bun test"
   },
   "devDependencies": {
+    "@types/node": "^26.1.1",
     "@types/react": "^19.2.10",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.2",
@@ -20,7 +23,6 @@
     "@tailwindcss/postcss": "^4.1.18",
     "@tailwindcss/vite": "^4.1.18",
     "clsx": "^2.1.1",
-    "uplot": "^1.6.32",
     "konva": "^10.2.0",
     "lucide-react": "^0.563.0",
     "react": "^19.2.4",
@@ -28,6 +30,7 @@
     "react-konva": "^19.2.1",
     "tailwind-merge": "^3.4.0",
     "tailwindcss": "^4.1.18",
+    "uplot": "^1.6.32",
     "zustand": "^5.0.10"
   }
 }

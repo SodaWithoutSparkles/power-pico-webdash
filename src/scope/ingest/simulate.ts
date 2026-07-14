@@ -6,6 +6,7 @@ import { LOW_CUR, type DecodedPacket, type Sample } from "../decode/decode.ts";
 export class Simulator {
     private tUs = 0;
     private readonly dtUs: number;
+    private _interval: ReturnType<typeof setInterval> | null = null;
 
     constructor(
         pktRateHz = 10,
@@ -21,6 +22,10 @@ export class Simulator {
     readonly pktRateHz: number;
     readonly samplesPerPacket: number;
     readonly freqHz: number;
+
+    get running(): boolean {
+        return this._interval !== null;
+    }
 
     reset(): void {
         this.tUs = 0;
@@ -48,5 +53,25 @@ export class Simulator {
         };
         this.tUs += this.dtUs;
         return pkt;
+    }
+
+    /**
+     * Start generating packets in a setInterval loop.
+     * Calls `onPacket(pkt)` for each generated packet.
+     */
+    startLoop(onPacket: (pkt: DecodedPacket) => void): void {
+        if (this._interval !== null) return;
+        this._interval = setInterval(() => {
+            if (!this.running) return;
+            onPacket(this.next());
+        }, 1000 / this.pktRateHz);
+    }
+
+    /** Stop the interval loop. */
+    stopLoop(): void {
+        if (this._interval !== null) {
+            clearInterval(this._interval);
+            this._interval = null;
+        }
     }
 }
