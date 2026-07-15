@@ -1,5 +1,6 @@
 // Synthetic packet generator so the scope runs without hardware.
 // Sine voltage + noisy current; timestamp advances at pktRateHz.
+// Matches real hardware: 10 samples/packet, 1 packet/ms, 10k samples/s.
 
 import { LOW_CUR, type DecodedPacket, type Sample } from "../decode/decode.ts";
 
@@ -9,8 +10,8 @@ export class Simulator {
     private _interval: ReturnType<typeof setInterval> | null = null;
 
     constructor(
-        pktRateHz = 10,
-        samplesPerPacket = 1,
+        pktRateHz = 1000,
+        samplesPerPacket = 10,
         freqHz = 0.5,
     ) {
         this.pktRateHz = pktRateHz;

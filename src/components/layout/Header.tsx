@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useScopeStore } from '../../store/scopeStore';
 import { FileMenu } from './header/FileMenu';
 import { EditMenu } from './header/EditMenu';
@@ -10,6 +10,8 @@ export const Header: React.FC = () => {
     const [activeMenu, setActiveMenu] = useState<string | null>(null);
     const status = useScopeStore((s) => s.status);
     const engineRef = useScopeStore((s) => s.engineRef);
+    const tZeroSet = useScopeStore((s) => s.tZeroSet);
+    const setTZeroSet = useScopeStore((s) => s.setTZeroSet);
     const connectSerial = useScopeStore((s) => s.connectSerial);
     const disconnectSerial = useScopeStore((s) => s.disconnectSerial);
 
@@ -19,6 +21,21 @@ export const Header: React.FC = () => {
     const toggleMenu = (menu: string) => {
         setActiveMenu(activeMenu === menu ? null : menu);
     };
+
+    const handleTZero = useCallback(() => {
+        if (tZeroSet) {
+            engineRef?.resetTZero();
+            setTZeroSet(false);
+        } else {
+            engineRef?.setTZero(status.lastTimestampUs);
+            setTZeroSet(true);
+        }
+    }, [tZeroSet, engineRef, status.lastTimestampUs, setTZeroSet]);
+
+    const handleClear = useCallback(() => {
+        engineRef?.clear();
+        setTZeroSet(false);
+    }, [engineRef, setTZeroSet]);
 
     return (
         <div className="h-8 bg-gray-900 border-b border-gray-700 flex items-center px-2 text-sm text-gray-300 select-none relative z-50">
@@ -34,8 +51,8 @@ export const Header: React.FC = () => {
                 onStartSimulate={() => engineRef?.startSimulate()}
                 onStart={() => engineRef?.start()}
                 onPause={() => engineRef?.pause()}
-                onClear={() => engineRef?.clear()}
-                onSetTZero={() => engineRef?.setTZero(status.lastTimestampUs)}
+                onClear={handleClear}
+                onSetTZero={handleTZero}
                 onExportScreenshot={() => {
                     const canvas = document.querySelector('canvas');
                     if (canvas) {

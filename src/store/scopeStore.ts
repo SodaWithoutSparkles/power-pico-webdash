@@ -40,6 +40,10 @@ export interface ScopeStoreState {
     hysteresisTier: ScaleTier;
     setHysteresisTier: (t: ScaleTier) => void;
 
+    // T+0 toggle state
+    tZeroSet: boolean;
+    setTZeroSet: (v: boolean) => void;
+
     // Engine ref (set once on mount, used by components for direct calls)
     engineRef: ScopeEngine | null;
     setEngineRef: (e: ScopeEngine | null) => void;
@@ -97,6 +101,9 @@ export const useScopeStore = create<ScopeStoreState>((set, get) => ({
 
     hysteresisTier: "ma" as ScaleTier,
     setHysteresisTier: (hysteresisTier) => set({ hysteresisTier }),
+
+    tZeroSet: false,
+    setTZeroSet: (tZeroSet) => set({ tZeroSet }),
 
     engineRef: null,
     setEngineRef: (engineRef) => set({ engineRef }),

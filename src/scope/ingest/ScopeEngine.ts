@@ -8,7 +8,6 @@ import { calculateBuckets } from "../lib/bucket";
 import { DualStageIntegrator, integrateRange } from "../lib/integrator";
 import { ExtremesTracker } from "../lib/extremesTracker";
 import { sliceDisplay } from "../format/sliceDisplay";
-import { Simulator } from "./simulate";
 import { updateScaleDelta, type ScaleTier } from "../lib/hysteresis";
 import type { BucketedTelemetryData, StatusPayload } from "../types/workerTypes";
 
@@ -73,7 +72,7 @@ export class ScopeEngine {
     }
 
     private parser: PacketParser;
-    private simulator: Simulator | null = null;
+    private _simWorker: Worker | null = null;
 
     running = false;
     /** When true, ingestion (serial data, pushSample) is skipped but graph rendering continues. */
@@ -264,15 +263,27 @@ export class ScopeEngine {
     }
 
     startSimulate(): void {
-        this.simulator = new Simulator(1000, 10, 0.5);
         this.mode = "simulate";
         this.running = true;
-        this.simulator.startLoop((pkt) => this._ingestDecodedPacket(pkt));
+        this._simWorker = new Worker(
+            new URL("./simulateWorker.ts", import.meta.url),
+            { type: "module" },
+        );
+        this._simWorker.onmessage = (e) => {
+            if (e.data.type === "packets") {
+                for (const pkt of e.data.packets) {
+                    this._ingestDecodedPacket(pkt);
+                }
+            }
+        };
+        this._simWorker.postMessage({ type: "start" });
     }
 
     stopSimulate(): void {
-        this.simulator?.stopLoop();
-        this.simulator = null;
+        if (this._simWorker) {
+            this._simWorker.terminate();
+            this._simWorker = null;
+        }
         if (this.mode === "simulate") {
             this.mode = "idle";
             this.running = false;

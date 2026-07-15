@@ -2,12 +2,13 @@ import React, { useRef, useState, useCallback } from 'react';
 import { useScopeStore } from '../../store/scopeStore';
 import { ZoomIn, ZoomOut } from 'lucide-react';
 
-const BLACK_WIDTH = 200;
+const BLACK_WIDTH = 250;
 const MIN_GREEN_WIDTH = 10;
 
 export const ZoomPreview: React.FC = () => {
     const engineRef = useScopeStore((s) => s.engineRef);
     const config = useScopeStore((s) => s.config);
+    const status = useScopeStore((s) => s.status);
 
     const [cursorFrac, setCursorFrac] = useState(0);
     const isDragging = useRef(false);
@@ -117,15 +118,26 @@ export const ZoomPreview: React.FC = () => {
                 <ZoomIn size={9} className="text-gray-400" />
             </button>
             <div
-                className="relative bg-gray-950 border border-gray-700 rounded-none cursor-pointer"
+                className="relative bg-gray-950 border border-gray-700 rounded-none cursor-pointer overflow-hidden"
                 style={{ width: BLACK_WIDTH, height: buttonHeight }}
                 onMouseDown={handleBlackClick}
             >
+                {/* Buffer fill bar — lowest z among children, sits at bottom */}
+                <div
+                    className="absolute bottom-0 right-0 bg-blue-600"
+                    style={{
+                        width: `${Math.min(100, status.bufferFillPct * 100)}%`,
+                        height: 3,
+                        zIndex: 1,
+                    }}
+                />
+                {/* Green viewport rect — sits above buffer bar */}
                 <div
                     className="absolute top-0 h-full bg-green-500/30 border border-green-500 rounded-sm"
                     style={{
                         width: greenWidth,
                         left: leftPos,
+                        zIndex: 2,
                         cursor: isDragging.current ? 'grabbing' : 'ew-resize',
                     }}
                     onWheel={handleWheel}

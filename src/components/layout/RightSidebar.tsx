@@ -64,8 +64,6 @@ function SidebarNumInput({
 export const RightSidebar: React.FC = () => {
     const config = useScopeStore((s) => s.config);
     const setConfig = useScopeStore((s) => s.setConfig);
-    const status = useScopeStore((s) => s.status);
-    const engineRef = useScopeStore((s) => s.engineRef);
 
     return (
         <div className="w-64 bg-gray-800 border-l border-gray-700 flex flex-col text-gray-300 z-20 overflow-y-auto">
@@ -100,22 +98,6 @@ export const RightSidebar: React.FC = () => {
                         <option value="lttb">LTTB</option>
                     </select>
                 </div>
-            </Section>
-
-            {/* T+0 */}
-            <Section title="T+0">
-                <button
-                    onClick={() => engineRef?.setTZero(status.lastTimestampUs)}
-                    className="w-full px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-xs font-medium"
-                >
-                    Set T=0
-                </button>
-                <button
-                    onClick={() => engineRef?.resetTZero()}
-                    className="w-full px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-xs font-medium"
-                >
-                    Reset T=0
-                </button>
             </Section>
 
         </div>

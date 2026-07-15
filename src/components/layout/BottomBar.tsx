@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { useScopeStore } from '../../store/scopeStore';
 import clsx from 'clsx';
 
@@ -14,11 +14,24 @@ function fmtTimestamp(us: number): string {
 
 export const BottomBar: React.FC = () => {
     const status = useScopeStore((s) => s.status);
+    const engineRef = useScopeStore((s) => s.engineRef);
+
+    const toggleRunning = useCallback(() => {
+        if (status.running) {
+            engineRef?.pause();
+        } else {
+            engineRef?.start();
+        }
+    }, [status.running, engineRef]);
 
     return (
         <div className="h-7 bg-gray-900 border-t border-gray-700 flex items-center px-3 text-xs text-gray-400 gap-4 shrink-0">
-            {/* Status LED */}
-            <div className="flex items-center gap-1.5">
+            {/* Status LED — clickable to toggle run/pause */}
+            <button
+                onClick={toggleRunning}
+                className="flex items-center gap-1.5 hover:text-gray-200 transition-colors"
+                title={status.running ? 'Click to pause' : 'Click to start'}
+            >
                 <span
                     className={clsx(
                         'w-2 h-2 rounded-full',
@@ -26,7 +39,7 @@ export const BottomBar: React.FC = () => {
                     )}
                 />
                 <span className="font-medium">{status.running ? 'Run' : 'Paused'}</span>
-            </div>
+            </button>
 
             {/* Mode badge */}
             <span
@@ -45,20 +58,9 @@ export const BottomBar: React.FC = () => {
             {/* Metrics */}
             <span className="tabular-nums w-20 text-right">{status.samplesPerSec} smp/s</span>
             <span className="tabular-nums w-20 text-right">{status.observationCount} obs</span>
-            <div className="flex items-center gap-1.5">
-                <div className="relative w-20 h-3.5 bg-gray-800 rounded-sm overflow-hidden">
-                    <div
-                        className={clsx(
-                            'absolute top-0 right-0 h-full transition-all duration-200',
-                            status.bufferFillPct > 0.9 ? 'bg-yellow-600' : 'bg-blue-600',
-                        )}
-                        style={{ width: `${Math.min(100, status.bufferFillPct * 100)}%` }}
-                    />
-                    <span className="absolute inset-0 flex items-center justify-center text-[9px] font-mono text-white/90 leading-none">
-                        {(status.bufferFillPct * 100).toFixed(0)}%
-                    </span>
-                </div>
-            </div>
+            <span className="tabular-nums">
+                {(status.bufferFillPct * 100).toFixed(0)}% Buf
+            </span>
 
             <div className="ml-auto" />
 

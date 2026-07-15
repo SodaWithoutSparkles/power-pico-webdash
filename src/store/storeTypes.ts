@@ -11,13 +11,27 @@ export type TextSaveModifier = ModifierKey | 'none';
 
 export type NotificationType = 'info' | 'success' | 'warning' | 'error';
 
+export interface NotificationAction {
+    label: string;
+    onClick: () => void;
+}
+
 export interface Notification {
     id: string;
     type: NotificationType;
     title?: string;
     message: string;
     detail?: string;
+    /** @deprecated use dismissDelay */
     timeout?: number;
+    /** Self-dismiss delay in ms. Falls back to timeout, then type default. */
+    dismissDelay?: number;
+    /** Higher priority = shown first. Default 0. */
+    priority?: number;
+    /** Action buttons displayed at the bottom of the notification. */
+    actions?: NotificationAction[];
+    /** Dedup counter — bumped when same-id notification is re-fired. */
+    count?: number;
 }
 
 export interface KeyboardShortcutConfig {
