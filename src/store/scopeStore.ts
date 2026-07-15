@@ -86,6 +86,8 @@ const defaultStatus: ScopeStatus = {
     liveI: 0,
     liveW: 0,
     packetWarning: null,
+    followIngest: true,
+    cursorLocked: true,
 };
 
 // Debounced apply so rapid config changes (e.g. resize) don't replay the raw ring every frame.

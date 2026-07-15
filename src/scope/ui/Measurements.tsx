@@ -3,6 +3,7 @@
 
 import React from "react";
 import { useScopeStore } from "../../store/scopeStore";
+import { fmtSI, fmtTimeUS } from "../format/formatValue";
 
 export const Measurements: React.FC = () => {
     const selection = useScopeStore((s) => s.selection);
@@ -15,9 +16,9 @@ export const Measurements: React.FC = () => {
                     <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold mb-1">
                         Selection
                     </div>
-                    <Row label="Δt" value={`${(selection.dtUs / 1_000_000).toFixed(3)} s`} />
-                    <Row label="Energy" value={`${selection.energyJ.toFixed(6)} J`} />
-                    <Row label="Charge" value={`${selection.chargeC.toFixed(6)} C`} />
+                    <Row label="Δt" value={fmtTimeUS(selection.dtUs, 3)} />
+                    <Row label="Energy" value={fmtSI(selection.energyJ, "J", 4)} />
+                    <Row label="Charge" value={fmtSI(selection.chargeC, "C", 4)} />
                 </div>
             )}
         </div>

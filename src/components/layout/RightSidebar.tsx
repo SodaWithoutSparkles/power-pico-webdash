@@ -1,7 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useScopeStore } from '../../store/scopeStore';
 import { ChevronDown, ChevronRight, Eraser } from 'lucide-react';
 import { peakToUnitValue, tierToLabel } from '../../scope/lib/hysteresis';
+import { fmtSI, fmtCurrent } from '../../scope/format/formatValue';
+import { LiveSmoother, SMOOTH_MODES } from '../../scope/lib/liveSmoother';
+import type { SmoothMode } from '../../scope/lib/liveSmoother';
 
 function Section({ title, defaultOpen, children }: { title: string; defaultOpen?: boolean; children: React.ReactNode }) {
     const [open, setOpen] = useState(defaultOpen ?? false);
@@ -19,17 +22,11 @@ function Section({ title, defaultOpen, children }: { title: string; defaultOpen?
     );
 }
 
-/** Split current value + unit using hysteresis tier. µA gets 3dp. */
+/** Split current value + unit using hysteresis tier. All tiers use 3dp for alignment. */
 function fmtCurrentParts(amps: number, tier: "ua" | "ma" | "a"): { value: string; unit: string } {
     const scaled = peakToUnitValue(amps, tier);
     const unit = tierToLabel(tier);
-    let value: string;
-    switch (tier) {
-        case "ua": value = scaled.toFixed(3); break;
-        case "ma": value = scaled.toFixed(2); break;
-        case "a": value = scaled.toFixed(3); break;
-    }
-    return { value, unit };
+    return { value: scaled.toFixed(3), unit };
 }
 
 /** Format microseconds to seconds with dp places. */
@@ -60,8 +57,20 @@ export const RightSidebar: React.FC = () => {
     const [sessionInSI, setSessionInSI] = useState(false);
     // Selection toggle: false → mWh/mAh, true → J/C
     const [selInSI, setSelInSI] = useState(false);
+    // Live smoothing mode
+    const [smoothMode, setSmoothMode] = useState<SmoothMode>("Medium");
 
-    const cur = fmtCurrentParts(status.liveI, hysteresisTier);
+    // Live smoother — stable ref, updated on mode change
+    const smootherRef = useRef<LiveSmoother>(null);
+    if (!smootherRef.current) smootherRef.current = new LiveSmoother();
+    smootherRef.current.mode = smoothMode;
+
+    // Push raw status values through the smoother
+    const now = performance.now();
+    smootherRef.current.push(status.liveV, status.liveI, status.liveW, now);
+    const smooth = smootherRef.current.getSmoothed();
+
+    const cur = fmtCurrentParts(smooth.i, hysteresisTier);
 
     // mWh = energyJ / 3.6,  mAh = chargeC / 3.6
     const mwh = sessionTotals.energyJ / 3.6;
@@ -78,10 +87,23 @@ export const RightSidebar: React.FC = () => {
             <div className={`flex-1 overflow-y-auto bg-gray-800 ${selection ? 'pb-56' : ''}`}>
                 {/* ── Live values ── */}
                 <div className="px-3 py-3 border-b border-gray-700/50">
-                    <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold mb-1.5">Live</div>
+                    <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold mb-1.5 flex items-center gap-2">
+                        Live
+                        <button
+                            onClick={() => {
+                                const idx = SMOOTH_MODES.indexOf(smoothMode);
+                                setSmoothMode(SMOOTH_MODES[(idx + 1) % SMOOTH_MODES.length]);
+                            }}
+                            className="ml-auto text-[9px] font-mono font-normal normal-case tracking-normal px-1.5 py-0.5 rounded
+                                       bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white transition-colors"
+                            title="Click to cycle smoothing mode"
+                        >
+                            {smoothMode}
+                        </button>
+                    </div>
                     <div className="grid grid-cols-2 gap-1.5">
                         {/* Row 1: V + mWh */}
-                        <LiveCard value={`${status.liveV.toFixed(3)} V`} bg="bg-red-700" />
+                        <LiveCard value={fmtSI(smooth.v, "V", 3)} bg="bg-red-700" />
                         <SessionCard
                             value={sessionInSI ? sessionTotals.energyJ.toFixed(3) : mwh.toFixed(3)}
                             unit={sessionInSI ? 'J' : 'mWh'}
@@ -101,7 +123,7 @@ export const RightSidebar: React.FC = () => {
                             bg="bg-gray-700"
                         />
                         {/* Row 3: P + clear button */}
-                        <LiveCard value={`${status.liveW.toFixed(3)} W`} bg="bg-blue-700" />
+                        <LiveCard value={fmtSI(smooth.w, "W", 3)} bg="bg-blue-700" />
                         <button
                             onClick={handleClear}
                             className="bg-gray-700 rounded-lg px-2.5 py-1.5 text-white/60 hover:text-white hover:bg-gray-600 transition-colors flex items-center justify-center gap-1.5 text-xs"
@@ -126,6 +148,18 @@ export const RightSidebar: React.FC = () => {
                             <option value="lttb">LTTB</option>
                         </select>
                     </div>
+                    <div className="flex items-center gap-2">
+                        <label className="text-xs text-gray-400 w-20">Live smoothing</label>
+                        <select
+                            value={smoothMode}
+                            onChange={(e) => setSmoothMode(e.target.value as SmoothMode)}
+                            className="flex-1 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
+                        >
+                            {SMOOTH_MODES.map((m) => (
+                                <option key={m} value={m}>{m}</option>
+                            ))}
+                        </select>
+                    </div>
                 </Section>
             </div>
 
@@ -138,31 +172,27 @@ export const RightSidebar: React.FC = () => {
                     <div className="grid grid-cols-2 gap-1.5">
                         <SelCard label="From" value={fmtSec(selection.fromTs, 2)} unit="s" />
                         <SelCard label="To" value={fmtSec(selection.toTs, 2)} unit="s" />
-                        <SelCard label="Peak V" value={selection.peakV.toFixed(3)} unit="V" textColor="text-yellow-400" />
-                        <SelCard label="Avg V" value={selection.avgV.toFixed(3)} unit="V" textColor="text-yellow-400" />
-                        <SelCard label="Peak I" value={selection.peakI.toFixed(3)} unit="A" textColor="text-cyan-400" />
-                        <SelCard label="Avg I" value={selection.avgI.toFixed(3)} unit="A" textColor="text-cyan-400" />
+                        <SelCard label="Peak V" value={fmtSI(selection.peakV, "V", 3)} textColor="text-yellow-400" />
+                        <SelCard label="Avg V" value={fmtSI(selection.avgV, "V", 3)} textColor="text-yellow-400" />
+                        <SelCard label="Peak I" value={fmtCurrent(selection.peakI, hysteresisTier)} textColor="text-cyan-400" />
+                        <SelCard label="Avg I" value={fmtCurrent(selection.avgI, hysteresisTier)} textColor="text-cyan-400" />
                         <SelToggleCard
                             value={selInSI
-                                ? (selection.energyJ).toFixed(3)
-                                : (selection.energyJ / 3.6).toFixed(3)}
-                            unit={selInSI ? 'J' : 'mWh'}
-                            tooltipValue={selInSI
-                                ? (selection.energyJ / 3.6).toFixed(6)
-                                : (selection.energyJ).toFixed(6)}
-                            tooltipUnit={selInSI ? 'mWh' : 'J'}
+                                ? fmtSI(selection.energyJ, 'J', 4)
+                                : fmtSI(selection.energyJ / 3.6, 'Wh', 4)}
+                            tooltip={selInSI
+                                ? fmtSI(selection.energyJ / 3.6, 'Wh', 6)
+                                : fmtSI(selection.energyJ, 'J', 6)}
                             onClick={() => setSelInSI(!selInSI)}
                             label="Energy"
                         />
                         <SelToggleCard
                             value={selInSI
-                                ? (selection.chargeC).toFixed(3)
-                                : (selection.chargeC / 3.6).toFixed(3)}
-                            unit={selInSI ? 'C' : 'mAh'}
-                            tooltipValue={selInSI
-                                ? (selection.chargeC / 3.6).toFixed(6)
-                                : (selection.chargeC).toFixed(6)}
-                            tooltipUnit={selInSI ? 'mAh' : 'C'}
+                                ? fmtSI(selection.chargeC, 'C', 4)
+                                : fmtSI(selection.chargeC / 3.6, 'Ah', 4)}
+                            tooltip={selInSI
+                                ? fmtSI(selection.chargeC / 3.6, 'Ah', 6)
+                                : fmtSI(selection.chargeC, 'C', 6)}
                             onClick={() => setSelInSI(!selInSI)}
                             label="Charge"
                         />
@@ -173,17 +203,30 @@ export const RightSidebar: React.FC = () => {
     );
 };
 
+// ── Helpers ──
+
+/** Split "-14.000 mV" → { sign: "-", num: "14.000", unit: "mV" }. */
+function splitValue(value: string): { sign: string; num: string; unit: string } {
+    const i = value.lastIndexOf(' ');
+    const numPart = i > 0 ? value.slice(0, i) : value;
+    const unit = i > 0 ? value.slice(i + 1) : '';
+    const sign = numPart.startsWith('-') ? '-' : '';
+    const num = sign ? numPart.slice(1) : numPart;
+    return { sign, num, unit };
+}
+
 // ── Card components ──
 
-/** Compact rounded card: number + right-aligned unit. */
+/** Compact rounded card: sign-left, number-right, unit in fixed-width slot. */
 function LiveCard({ value, bg }: { value: string; bg: string }) {
-    const i = value.lastIndexOf(' ');
-    const num = i > 0 ? value.slice(0, i) : value;
-    const unit = i > 0 ? value.slice(i + 1) : '';
+    const { sign, num, unit } = splitValue(value);
     return (
-        <div className={`${bg} rounded-lg px-2.5 py-1.5 text-white flex items-baseline justify-between gap-1`}>
-            <span className="text-sm font-bold font-mono tabular-nums leading-tight">{num}</span>
-            {unit && <span className="text-[10px] text-white/60 font-medium shrink-0">{unit}</span>}
+        <div className={`${bg} rounded-lg px-2.5 py-1.5 text-white`}>
+            <div className="flex items-baseline gap-1">
+                <span className="w-3 text-left text-sm font-bold font-mono leading-tight">{sign}</span>
+                <span className="flex-1 text-right text-sm font-bold font-mono tabular-nums leading-tight">{num}</span>
+                <span className="w-[1.25rem] text-right text-[10px] text-white/60 font-medium">{unit}</span>
+            </div>
         </div>
     );
 }
@@ -195,49 +238,67 @@ function SessionCard({
     value: string; unit: string; tooltipValue: string; tooltipUnit: string;
     onClick: () => void; bg: string;
 }) {
+    const sign = value.startsWith('-') ? '-' : '';
+    const num = sign ? value.slice(1) : value;
     return (
         <button
             onClick={onClick}
-            className={`${bg} rounded-lg px-2.5 py-1.5 text-white flex items-baseline justify-between gap-1 relative cursor-pointer hover:brightness-110 transition-all`}
+            className={`${bg} rounded-lg px-2.5 py-1.5 text-white relative cursor-pointer hover:brightness-110 transition-all`}
             title={`${tooltipValue} ${tooltipUnit}`}
         >
-            <span className="text-sm font-bold font-mono tabular-nums leading-tight">{value}</span>
-            <span className="text-[10px] text-white/60 font-medium shrink-0">{unit}</span>
+            <div className="flex items-baseline gap-1">
+                <span className="w-3 text-left text-sm font-bold font-mono leading-tight">{sign}</span>
+                <span className="flex-1 text-right text-sm font-bold font-mono tabular-nums leading-tight">{num}</span>
+                <span className="w-[1.25rem] text-right text-[10px] text-white/60 font-medium">{unit}</span>
+            </div>
         </button>
     );
 }
 
-/** Selection card: small label above, value + unit inline. */
+/** Selection card: small label above, sign-left, number-right, unit in fixed-width slot. */
 function SelCard({ label, value, unit, textColor }: { label: string; value: string; unit?: string; textColor?: string }) {
+    // Parse combined string like "14.000 mV" if no explicit unit given
+    const i = value.lastIndexOf(' ');
+    const numPart = i > 0 && !unit ? value.slice(0, i) : value;
+    const unitPart = unit ?? (i > 0 ? value.slice(i + 1) : '');
+    const sign = numPart.startsWith('-') ? '-' : '';
+    const num = sign ? numPart.slice(1) : numPart;
+    const tc = textColor ?? 'text-white';
     return (
         <div className="bg-gray-900/60 rounded-lg px-2 py-1.5 text-white">
             <div className="text-[9px] text-gray-500 uppercase tracking-wider font-semibold">{label}</div>
-            <div className="flex items-baseline justify-between gap-1">
-                <span className={`text-xs font-bold font-mono tabular-nums leading-tight ${textColor ?? 'text-white'}`}>{value}</span>
-                {unit && <span className="text-[9px] text-white/50 font-medium shrink-0">{unit}</span>}
+            <div className="flex items-baseline gap-1">
+                <span className={`w-3 text-left text-xs font-bold font-mono leading-tight ${tc}`}>{sign}</span>
+                <span className={`flex-1 text-right text-xs font-bold font-mono tabular-nums leading-tight ${tc}`}>{num}</span>
+                <span className="w-[1.25rem] text-right text-[9px] text-white/50 font-medium">{unitPart}</span>
             </div>
         </div>
     );
 }
 
-/** Selection toggle card: label, clickable value with tooltip. */
+/** Selection toggle card: label, clickable value with tooltip showing alternate unit. */
 function SelToggleCard({
-    label, value, unit, tooltipValue, tooltipUnit, onClick,
+    label, value, tooltip, onClick,
 }: {
-    label: string; value: string; unit: string;
-    tooltipValue: string; tooltipUnit: string;
+    label: string; value: string; tooltip: string;
     onClick: () => void;
 }) {
+    const i = value.lastIndexOf(' ');
+    const numPart = i > 0 ? value.slice(0, i) : value;
+    const unitPart = i > 0 ? value.slice(i + 1) : '';
+    const sign = numPart.startsWith('-') ? '-' : '';
+    const num = sign ? numPart.slice(1) : numPart;
     return (
         <button
             onClick={onClick}
             className="bg-gray-900/60 rounded-lg px-2 py-1.5 text-white cursor-pointer hover:brightness-110 transition-all text-left"
-            title={`${tooltipValue} ${tooltipUnit}`}
+            title={tooltip}
         >
             <div className="text-[9px] text-gray-500 uppercase tracking-wider font-semibold">{label}</div>
-            <div className="flex items-baseline justify-between gap-1">
-                <span className="text-xs font-bold font-mono tabular-nums leading-tight">{value}</span>
-                <span className="text-[9px] text-white/50 font-medium shrink-0">{unit}</span>
+            <div className="flex items-baseline gap-1">
+                <span className="w-3 text-left text-xs font-bold font-mono leading-tight">{sign}</span>
+                <span className="flex-1 text-right text-xs font-bold font-mono tabular-nums leading-tight">{num}</span>
+                <span className="w-[1.25rem] text-right text-[9px] text-white/50 font-medium">{unitPart}</span>
             </div>
         </button>
     );

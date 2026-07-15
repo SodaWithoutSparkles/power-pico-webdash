@@ -33,6 +33,8 @@ export interface StatusPayload {
     liveW: number;
     lastTimestampUs: number;
     packetWarning: string | null;
+    followIngest: boolean;
+    cursorLocked: boolean;
 }
 
 

@@ -8,6 +8,7 @@ import { useScopeStore } from "../../store/scopeStore";
 import { tierToLabel } from "../lib/hysteresis";
 import type { BucketedTelemetryData } from "../types/workerTypes";
 import { BUCKET_COUNT_MIN, BUCKET_COUNT_MAX, BUCKET_PX_RATIO, MIN_DRAG_WIDTH } from "../constants";
+import { fmtSI } from "../format/formatValue";
 
 // ── Channel styling ──
 
@@ -53,8 +54,9 @@ function toAlignedData(data: BucketedTelemetryData): uPlot.AlignedData {
 // ── Axis formatters ──
 
 function fmtTime(v: number): string {
-    if (v >= 1_000_000) return (v / 1_000_000).toFixed(2) + "s";
-    if (v >= 1_000) return (v / 1_000).toFixed(0) + "ms";
+    const abs = Math.abs(v);
+    if (abs >= 1_000_000) return (v / 1_000_000).toFixed(2) + "s";
+    if (abs >= 1_000) return (v / 1_000).toFixed(0) + "ms";
     return v.toFixed(0) + "µs";
 }
 
@@ -74,6 +76,7 @@ export const ScopeCanvas: React.FC = () => {
 
     const latestData = useScopeStore((s) => s.latestData);
     const channels = useScopeStore((s) => s.config.channels);
+    const hysteresisTier = useScopeStore((s) => s.hysteresisTier);
 
     // 1. Create uPlot instance (once)
     useEffect(() => {
@@ -115,7 +118,7 @@ export const ScopeCanvas: React.FC = () => {
             // ── Series ──
             series: [
                 {},                                                         // [0] x
-                { scale: "v", stroke: CHANNELS.v.stroke, width: 1.5, label: "V", value: (_, v) => (v ?? 0).toFixed(3) + " V" },       // [1] V avg
+                { scale: "v", stroke: CHANNELS.v.stroke, width: 1.5, label: "V", value: (_, v) => fmtSI(v ?? 0, "V", 3) },       // [1] V avg
                 { scale: "v", fill: CHANNELS.v.fill, width: 0 },  // [2] V min (band, no line)
                 { scale: "v", fill: CHANNELS.v.fill, width: 0 },  // [3] V max (band, no line)
                 {
@@ -126,7 +129,7 @@ export const ScopeCanvas: React.FC = () => {
                 },        // [4] I avg
                 { scale: "i", fill: CHANNELS.i.fill, width: 0 },  // [5] I min (band, no line)
                 { scale: "i", fill: CHANNELS.i.fill, width: 0 },  // [6] I max (band, no line)
-                { scale: "w", stroke: CHANNELS.w.stroke, width: 1.5, label: "W", value: (_, v) => (v ?? 0).toFixed(3) + " W" },       // [7] W avg
+                { scale: "w", stroke: CHANNELS.w.stroke, width: 1.5, label: "W", value: (_, v) => fmtSI(v ?? 0, "W", 3) },       // [7] W avg
                 { scale: "w", fill: CHANNELS.w.fill, width: 0 },  // [8] W min (band, no line)
                 { scale: "w", fill: CHANNELS.w.fill, width: 0 },  // [9] W max (band, no line)
             ],
@@ -159,7 +162,7 @@ export const ScopeCanvas: React.FC = () => {
                     labelGap: 4,
                     grid: { stroke: "rgba(75,85,99,0.25)", width: 0.5 },
                     ticks: { stroke: "#4B5563", width: 0.5 },
-                    values: (_self: uPlot, ticks: number[]) => ticks.map((v) => v.toFixed(2)),
+                    values: (_self: uPlot, ticks: number[]) => ticks.map((v) => fmtSI(v, "V", 2)),
                     size: 52,
                 },
                 {
@@ -188,7 +191,7 @@ export const ScopeCanvas: React.FC = () => {
                     side: 1,
                     grid: { show: false },
                     ticks: { stroke: "#4B5563", width: 0.5 },
-                    values: (_self: uPlot, ticks: number[]) => ticks.map((v) => v.toFixed(3)),
+                    values: (_self: uPlot, ticks: number[]) => ticks.map((v) => fmtSI(v, "W", 2)),
                     size: 56,
                 },
             ],
@@ -351,6 +354,17 @@ export const ScopeCanvas: React.FC = () => {
         u.setSeries(8, { show: channels.w });
         u.setSeries(9, { show: channels.w });
     }, [channels]);
+
+    // 3. Redraw axes when hysteresis tier changes
+    useEffect(() => {
+        const u = uplotRef.current;
+        if (!u) return;
+        // Update I-axis label with current unit
+        const iAxis = u.axes[2];
+        if (iAxis) iAxis.label = "I (" + tierToLabel(hysteresisTier) + ")";
+        // Force redraw so the axis value formatters re-evaluate with the new tier
+        u.redraw();
+    }, [hysteresisTier]);
 
     // 4. Esc clears selection
     useEffect(() => {

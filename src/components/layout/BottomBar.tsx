@@ -42,16 +42,19 @@ export const BottomBar: React.FC = () => {
                 <span className="font-medium">{status.running ? 'Run' : 'Paused'}</span>
             </button>
 
-            {/* Mode badge */}
+            {/* Buffer status badge */}
             <span
                 className={clsx(
                     'px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase',
-                    status.mode === 'simulate' && 'bg-yellow-900/60 text-yellow-400',
-                    status.mode === 'serial' && 'bg-green-900/60 text-green-400',
-                    status.mode === 'idle' && 'bg-gray-800 text-gray-500',
+                    !status.running && 'bg-gray-800 text-gray-500',
+                    status.running && status.followIngest && 'bg-green-900/60 text-green-400',
+                    status.running && !status.followIngest && !status.cursorLocked && 'bg-yellow-900/60 text-yellow-400',
+                    status.running && !status.followIngest && status.cursorLocked && 'bg-blue-900/60 text-blue-400',
                 )}
             >
-                {status.mode}
+                {status.running
+                    ? (status.followIngest ? 'Live' : status.cursorLocked ? 'frozen' : 'delayed')
+                    : 'Stop'}
             </span>
 
             <span className="text-gray-700 w-1">|</span>

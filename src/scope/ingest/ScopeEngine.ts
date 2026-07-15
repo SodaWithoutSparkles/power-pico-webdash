@@ -258,6 +258,7 @@ export class ScopeEngine {
     }
 
     clear(): void {
+        this.stopSimulate();
         this.ring.clear();
         this.format.clear();
         this._readCursor = 1;
@@ -278,12 +279,14 @@ export class ScopeEngine {
 
     disconnect(): void {
         this.running = false;
+        this.ingestingPaused = true;
         this.mode = "idle";
         this.parser.reset();
         this.tZeroOffset = 0;
     }
 
     startSimulate(): void {
+        this.clear();
         this.mode = "simulate";
         this.running = true;
         this._simWorker = new Worker(
@@ -325,12 +328,12 @@ export class ScopeEngine {
 
     /** Push a single (timestamp, voltage, current) observation directly. */
     pushSample(tsUs: number, voltage: number, current: number): void {
-        if (this.ingestingPaused) return;
+        if (!this.running || this.ingestingPaused) return;
         this.ingestObservation(tsUs, voltage, current);
     }
 
     pushSerialData(data: Uint8Array): void {
-        if (this.ingestingPaused) return;
+        if (!this.running || this.ingestingPaused) return;
         for (const pkt of this.parser.push(data)) {
             this._ingestDecodedPacket(pkt);
         }
@@ -579,6 +582,8 @@ export class ScopeEngine {
             liveW: liveV * liveI,
             lastTimestampUs: len > 0 ? Number(this.ring.timestamps[lastIdx]) : 0,
             packetWarning: pw,
+            followIngest: this._followIngest,
+            cursorLocked: this._cursorLocked,
         };
     }
 

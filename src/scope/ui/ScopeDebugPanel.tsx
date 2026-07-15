@@ -4,6 +4,7 @@
 import React, { useCallback } from "react";
 import { useScopeStore } from "../../store/scopeStore";
 import clsx from "clsx";
+import { fmtCurrent, fmtSI } from "../format/formatValue";
 
 export const ScopeDebugPanel: React.FC = () => {
     const status = useScopeStore((s) => s.status);
@@ -12,6 +13,7 @@ export const ScopeDebugPanel: React.FC = () => {
     const connectSerial = useScopeStore((s) => s.connectSerial);
     const disconnectSerial = useScopeStore((s) => s.disconnectSerial);
     const setStatus = useScopeStore((s) => s.setStatus);
+    const hysteresisTier = useScopeStore((s) => s.hysteresisTier);
 
     const act = useCallback(
         (fn: (e: import("../ingest/ScopeEngine").ScopeEngine) => void) => {
@@ -54,9 +56,9 @@ export const ScopeDebugPanel: React.FC = () => {
                 <div className="space-y-2 font-mono text-sm">
                     <Row label="Buffer" value={`${(status.bufferFillPct * 100).toFixed(1)}% full (${status.observationCount} obs)`} />
                     <Row label="Sample rate" value={`${status.samplesPerSec} smp/s`} />
-                    <Row label="Live V" value={`${status.liveV.toFixed(3)} V`} />
-                    <Row label="Live I" value={`${status.liveI.toFixed(6)} A`} />
-                    <Row label="Live P" value={`${status.liveW.toFixed(3)} W`} />
+                    <Row label="Live V" value={fmtSI(status.liveV, "V", 3)} />
+                    <Row label="Live I" value={fmtCurrent(status.liveI, hysteresisTier)} />
+                    <Row label="Live P" value={fmtSI(status.liveW, "W", 3)} />
                     <Row label="Last TS" value={`${status.lastTimestampUs} µs`} />
                     {latestData && (
                         <Row label="Buckets" value={`${latestData.timestamps.length} pts`} />

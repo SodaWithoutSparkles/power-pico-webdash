@@ -92,6 +92,7 @@ export class FormatEngine {
         this.displayMaxRing.clear();
         this.displayMeanRing.clear();
         this.displayMinRing.clear();
+        this._displayTempRing?.clear();
     }
 
     // ── Zero-padding ──

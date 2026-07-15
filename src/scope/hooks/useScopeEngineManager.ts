@@ -62,10 +62,16 @@ export function useScopeEngineManager() {
 
             const engine = engineRef.current;
             if (engine) {
+                engine.clear();
                 engine.start();
                 engine.mode = "serial";
                 setStatus(engine.computeStatus());
             }
+
+            // Reset store state for a clean slate
+            setLatestData(null);
+            setSessionTotals({ energyJ: 0, chargeC: 0 });
+            useScopeStore.setState({ tZeroSet: false, selection: null });
 
             const reader = port.readable!.getReader();
             serialAbortRef.current = { reader, port };

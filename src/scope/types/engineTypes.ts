@@ -31,5 +31,7 @@ export interface ScopeStatus {
     liveI: number;
     liveW: number;
     packetWarning: string | null;
+    followIngest: boolean;
+    cursorLocked: boolean;
 }
 

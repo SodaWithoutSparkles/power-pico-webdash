@@ -1,7 +1,7 @@
 import React, { useCallback } from 'react';
 import { useScopeStore } from '../../store/scopeStore';
 import { useStore } from '../../store/useStore';
-import { Zap, Activity, Gauge, Plug, Play, Pause, Timer } from 'lucide-react';
+import { Zap, Activity, Gauge, Plug, Play, Pause, Timer, Snowflake } from 'lucide-react';
 import clsx from 'clsx';
 
 export const LeftSidebar: React.FC = () => {
@@ -88,6 +88,34 @@ export const LeftSidebar: React.FC = () => {
                 </button>
             </div>
 
+            {/* Freeze / Unfreeze */}
+            <div className="relative w-full flex justify-center">
+                <button
+                    onClick={() => {
+                        if (!engineRef) return;
+                        if (engineRef.followIngest) {
+                            engineRef.followIngest = false;
+                            engineRef.cursorLocked = true;
+                        } else {
+                            engineRef.followIngest = true;
+                        }
+                    }}
+                    className={clsx(
+                        'p-2 rounded hover:bg-gray-700 transition-colors',
+                        !engineRef || engineRef.followIngest ? 'text-gray-500' : '',
+                        engineRef && !engineRef.followIngest && !engineRef.cursorLocked && 'text-yellow-400',
+                        engineRef && !engineRef.followIngest && engineRef.cursorLocked && 'text-blue-400',
+                    )}
+                    title={
+                        !engineRef || engineRef.followIngest
+                            ? 'Freeze view'
+                            : 'Return to live'
+                    }
+                >
+                    <Snowflake size={20} />
+                </button>
+            </div>
+
             {/* T+0 toggle */}
             <div className="relative w-full flex justify-center">
                 <button
@@ -104,13 +132,15 @@ export const LeftSidebar: React.FC = () => {
 
             <div className="w-8 h-px bg-gray-700 my-2" />
 
-            {/* Serial connect */}
+            {/* Serial / Simulate connect */}
             <div className="relative w-full flex justify-center">
                 <button
                     onClick={isSerial ? disconnectSerial : connectSerial}
                     className={clsx(
                         'p-2 rounded hover:bg-gray-700 transition-colors',
-                        isSerial ? 'text-green-400' : 'text-gray-500',
+                        status.mode === 'serial' && 'text-green-400',
+                        status.mode === 'simulate' && 'text-yellow-400',
+                        status.mode === 'idle' && 'text-gray-500',
                     )}
                     title={isSerial ? 'Disconnect Serial' : 'Connect Serial'}
                 >
