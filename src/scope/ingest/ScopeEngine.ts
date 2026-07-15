@@ -1,39 +1,26 @@
 // Single-threaded scope engine.
-// Owns the ring buffer, packet parser, integrator, and simulator.
+// Owns the ring buffer, packet parser, integrator, simulator, and format engine.
 // Replaces the Web Worker design — called directly from the main thread.
 
 import { PacketParser } from "../decode/decode";
 import { TelemetryRingBuffer } from "../ring/TelemetryRingBuffer";
-import { calculateBuckets } from "../lib/bucket";
 import { DualStageIntegrator, integrateRange } from "../lib/integrator";
 import { ExtremesTracker } from "../lib/extremesTracker";
-import { sliceDisplay } from "../format/sliceDisplay";
+import { FormatEngine } from "../format/FormatEngine";
 import { updateScaleDelta, type ScaleTier } from "../lib/hysteresis";
 import type { BucketedTelemetryData, StatusPayload } from "../types/workerTypes";
+import { DEFAULT_SAMPLE_INTERVAL_US } from "../constants";
 
 
 export class ScopeEngine {
     readonly ring: TelemetryRingBuffer;
     readonly integrator: DualStageIntegrator;
     readonly extremes: ExtremesTracker;
-    avgMode: "simple" | "lttb" = "simple";
+    readonly format: FormatEngine;
     /** Expected interval between observations (µs). Used for zero-stub timestamp spacing. */
-    sampleIntervalUs: number = 100; // default 100µs = 10 kHz
+    sampleIntervalUs: number = DEFAULT_SAMPLE_INTERVAL_US;
     /** When true (default), short display windows get zero-padded stubs so the trace edge stays stable. */
     zeroPadEnabled: boolean = true;
-
-    // ── Display rings (bucketed min/mean/max series) ──
-    // All three are always the same length (same push pattern in ingestSample).
-    // Init in _createDisplayRings() and rebuilt in setDisplayWindow().
-    // @ts-expect-error
-    private _displayMaxRing: TelemetryRingBuffer;
-    // @ts-expect-error
-    private _displayMeanRing: TelemetryRingBuffer;
-    // @ts-expect-error
-    private _displayMinRing: TelemetryRingBuffer;
-    private _displayTempRing: TelemetryRingBuffer | null = null;
-    private _avgWindowSize: number;
-    private _displayCapacity: number;
 
     /** Cursor position as fraction [0,1] of the display ring. 0 = tail, 1 = head. */
     private _readCursor = 1;
@@ -67,12 +54,10 @@ export class ScopeEngine {
         if (this._followIngest === v) return;
         this._followIngest = v;
         if (v) {
-            this._displayMaxRing.clear();
-            this._displayMeanRing.clear();
-            this._displayMinRing.clear();
+            this.format.clear();
             this._readCursor = 1;
             this._lockOffset = -1;
-            this._replayRawRing();
+            this.format.replayRawRing(this.ring);
         } else if (this._cursorLocked) {
             this._refreshLockOffset();
         }
@@ -124,12 +109,10 @@ export class ScopeEngine {
         if (displayCapacity > capacity) throw new Error("displayCapacity must be <= capacity");
         if (avgWindowSize * displayCapacity > capacity) throw new Error("avgWindowSize * displayCapacity must be <= capacity");
 
-        this._avgWindowSize = avgWindowSize;
-        this._displayCapacity = displayCapacity;
         this.ring = new TelemetryRingBuffer(capacity, {
             trackExtremes: { current: { peak: true, min: true, max: true } },
         });
-        this._createDisplayRings(displayCapacity, avgWindowSize);
+        this.format = new FormatEngine(displayCapacity, avgWindowSize);
         this.parser = new PacketParser();
         this.integrator = new DualStageIntegrator();
         this.extremes = new ExtremesTracker();
@@ -146,19 +129,17 @@ export class ScopeEngine {
         if (avgWindowSize * displayCapacity > this.ring.capacity)
             throw new Error("avgWindowSize * displayCapacity must be <= raw ring capacity");
 
-        this._avgWindowSize = avgWindowSize;
-        this._displayCapacity = displayCapacity;
-        this._createDisplayRings(displayCapacity, avgWindowSize);
+        this.format.setDisplayWindow(displayCapacity, avgWindowSize);
         this._readCursor = 1;
 
         // Replay existing raw data into the new display rings
-        this._replayRawRing();
+        this.format.replayRawRing(this.ring);
     }
 
-
-
-    get avgWindowSize(): number { return this._avgWindowSize; }
-    get displayCapacity(): number { return this._displayCapacity; }
+    get avgWindowSize(): number { return this.format.avgWindowSize; }
+    get displayCapacity(): number { return this.format.displayCapacity; }
+    get avgMode(): "simple" | "lttb" { return this.format.avgMode; }
+    set avgMode(m: "simple" | "lttb") { this.format.avgMode = m; }
 
     // ── Display cursor (fraction [0,1] over the display ring) ──
     setCursorToFraction(f: number): void {
@@ -189,34 +170,42 @@ export class ScopeEngine {
      * Returns points in chronological order.
      */
     readDisplayWindow(count: number, pad?: boolean): BucketedTelemetryData {
-        if (count === 0) return this._emptyBuckets();
+        if (count === 0) return this.format.emptyBuckets();
 
         if (!this._followIngest) {
             return this._readFromRawRing(count, pad);
         }
 
-        const len = this._displayMeanRing.length;
-        if (len === 0) return this._emptyBuckets();
+        const len = this.format.displayMeanRing.length;
+        if (len === 0) return this.format.emptyBuckets();
 
         // Ingest-following mode: cursor is at 1 (head), read from display ring
         if (count > 0) {
             const start = Math.max(0, len - count);
             const realCount = len - start;
             const missing = count - realCount;
-            if (missing <= 0) {
-                return this._sliceDisplay(start, len);
+            const doPad = pad ?? this.zeroPadEnabled;
+            if (missing <= 0 || !doPad) {
+                return this.format.sliceDisplay(start, len, this.tZeroOffset);
             }
-            return this._padLeft(this._sliceDisplay(start, len), missing, realCount, pad ?? this.zeroPadEnabled);
+            return this.format.padLeft(
+                this.format.sliceDisplay(start, len, this.tZeroOffset),
+                missing, realCount, this.sampleIntervalUs, this.tZeroOffset,
+            );
         }
 
         const absCount = -count;
         const end = Math.min(absCount, len);
         const realCount = end;
         const missing = absCount - realCount;
-        if (missing <= 0) {
-            return this._sliceDisplay(0, end);
+        const doPad = pad ?? this.zeroPadEnabled;
+        if (missing <= 0 || !doPad) {
+            return this.format.sliceDisplay(0, end, this.tZeroOffset);
         }
-        return this._padRight(this._sliceDisplay(0, end), missing, realCount, pad ?? this.zeroPadEnabled);
+        return this.format.padRight(
+            this.format.sliceDisplay(0, end, this.tZeroOffset),
+            missing, realCount, this.sampleIntervalUs, this.tZeroOffset,
+        );
     }
 
     /**
@@ -270,9 +259,7 @@ export class ScopeEngine {
 
     clear(): void {
         this.ring.clear();
-        this._displayMaxRing.clear();
-        this._displayMeanRing.clear();
-        this._displayMinRing.clear();
+        this.format.clear();
         this._readCursor = 1;
         this._lockOffset = -1;
         this.parser.reset();
@@ -404,7 +391,7 @@ export class ScopeEngine {
         this.integrator.push(rawTs, voltage, current);
         this.extremes.push(rawTs, voltage, current);
         if (this._followIngest) {
-            this._pushToDisplayRings(rawTs, voltage, current);
+            this.format.pushToDisplay(rawTs, voltage, current);
         } else if (this.cursorLocked && this._lockOffset >= 0) {
             // Slide cursor left so offset from data-start stays constant
             const cap = this.ring.capacity;
@@ -426,14 +413,14 @@ export class ScopeEngine {
         const rawCap = this.ring.capacity;
         const rawLen = this.ring.length;
         const tail = this.ring.tailIdx;
-        const avgSz = this._avgWindowSize;
+        const avgSz = this.avgWindowSize;
         const absCount = Math.abs(count);
         const totalSamples = absCount * avgSz;
 
         // Right edge of the window, rounded to a raw sample index
         const logicalEnd = Math.round(this._readCursor * rawCap);
-        if (logicalEnd <= 0) return this._emptyBuckets();
-        if (logicalEnd > rawCap) return this._emptyBuckets();
+        if (logicalEnd <= 0) return this.format.emptyBuckets();
+        if (logicalEnd > rawCap) return this.format.emptyBuckets();
 
         // Data occupies the rightmost portion of the logical buffer when not full
         const dataStart = rawLen < rawCap ? rawCap - rawLen : 0;
@@ -444,9 +431,9 @@ export class ScopeEngine {
             if (logicalStart < dataStart) {
                 // Window extends into empty region — clamp
                 const availableSamples = logicalEnd - dataStart;
-                if (availableSamples <= 0) return this._emptyBuckets();
+                if (availableSamples <= 0) return this.format.emptyBuckets();
                 const availableBuckets = Math.floor(availableSamples / avgSz);
-                if (availableBuckets <= 0) return this._emptyBuckets();
+                if (availableBuckets <= 0) return this.format.emptyBuckets();
                 return this._readFromRawRing(Math.min(count, availableBuckets), pad);
             }
 
@@ -497,9 +484,9 @@ export class ScopeEngine {
         if (logicalStop > rawCap) {
             // Past head — clamp
             const availableSamples = rawCap - logicalStart;
-            if (availableSamples <= 0) return this._emptyBuckets();
+            if (availableSamples <= 0) return this.format.emptyBuckets();
             const availableBuckets = Math.floor(availableSamples / avgSz);
-            if (availableBuckets <= 0) return this._emptyBuckets();
+            if (availableBuckets <= 0) return this.format.emptyBuckets();
             return this._readFromRawRing(-availableBuckets, pad);
         }
 
@@ -543,59 +530,9 @@ export class ScopeEngine {
         return { timestamps, avgV, minV, maxV, avgI, minI, maxI };
     }
 
-    /** Push a single sample through the averaging pipeline into the display rings. */
-    private _pushToDisplayRings(ts: bigint, v: number, i: number): void {
-        if (this._avgWindowSize === 1) {
-            this._displayMaxRing.push(ts, v, i);
-            this._displayMeanRing.push(ts, v, i);
-            this._displayMinRing.push(ts, v, i);
-            return;
-        }
-
-        if (!this._displayTempRing) return;
-        this._displayTempRing.push(ts, v, i);
-        if (this._displayTempRing.length < this._avgWindowSize) return;
-
-        const lastTs = this._displayTempRing.timestamps[this._displayTempRing.lastIdx];
-        const bucketedV = calculateBuckets(this._displayTempRing.voltages, 1, this.avgMode)[0];
-        const bucketedI = calculateBuckets(this._displayTempRing.currents, 1, this.avgMode)[0];
-        this._displayMaxRing.push(lastTs, bucketedV.max, bucketedI.max);
-        this._displayMeanRing.push(lastTs, bucketedV.avg, bucketedI.avg);
-        this._displayMinRing.push(lastTs, bucketedV.min, bucketedI.min);
-        this._displayTempRing.clear();
-    }
-
-    /** Slice the logical range [start, end) across all three display rings into a BucketedTelemetryData. */
-    private _sliceDisplay(start: number, end: number): BucketedTelemetryData {
-        return sliceDisplay(this._displayMaxRing, this._displayMeanRing, this._displayMinRing, start, end, this.tZeroOffset);
-    }
-
-    /** Create the three display rings and optional temp ring with standard options. */
-    private _createDisplayRings(capacity: number, avgWindowSize: number): void {
-        this._displayMaxRing = new TelemetryRingBuffer(capacity, {
-            trackExtremes: { current: { max: true } },
-        });
-        this._displayMeanRing = new TelemetryRingBuffer(capacity);
-        this._displayMinRing = new TelemetryRingBuffer(capacity, {
-            trackExtremes: { current: { min: true } },
-        });
-        this._displayTempRing = avgWindowSize > 1 ? new TelemetryRingBuffer(avgWindowSize) : null;
-    }
-
-    /** Walk the raw ring and re-populate display rings. Call after creating new display rings. */
-    private _replayRawRing(): void {
-        const len = this.ring.length;
-        if (len === 0) return;
-        const tail = this.ring.tailIdx;
-        const cap = this.ring.capacity;
-        for (let i = 0; i < len; i++) {
-            const idx = (tail + i) % cap;
-            this._pushToDisplayRings(
-                this.ring.timestamps[idx],
-                this.ring.voltages[idx],
-                this.ring.currents[idx],
-            );
-        }
+    /** Length of the display mean ring (for debug logging). */
+    get displayLength(): number {
+        return this.format.displayMeanRing.length;
     }
 
     // ── T+0 offset ──
@@ -654,64 +591,6 @@ export class ScopeEngine {
         return this.extremes.getExtremes();
     }
 
-    // ── Zero-padding helpers ──
-
-    /** Prepend `missing` zero-value stubs before real data (positive-count mode). */
-    private _padLeft(data: BucketedTelemetryData, missing: number, realCount: number, pad: boolean): BucketedTelemetryData {
-        if (!pad) {
-            return data;
-        }
-
-        const spacing = realCount > 1
-            ? (data.timestamps[realCount - 1] - data.timestamps[0]) / (realCount - 1)
-            : this.sampleIntervalUs;
-
-        const firstRealTs = data.timestamps[0] + this.tZeroOffset;
-        const stubTimestamps = new Float64Array(missing);
-        const stubZeros = new Float32Array(missing);
-        for (let i = 0; i < missing; i++) {
-            stubTimestamps[i] = firstRealTs - (missing - i) * spacing - this.tZeroOffset;
-        }
-
-        return {
-            timestamps: concatFloat64(stubTimestamps, data.timestamps),
-            avgV: concatFloat32(stubZeros, data.avgV),
-            minV: concatFloat32(stubZeros, data.minV),
-            maxV: concatFloat32(stubZeros, data.maxV),
-            avgI: concatFloat32(stubZeros, data.avgI),
-            minI: concatFloat32(stubZeros, data.minI),
-            maxI: concatFloat32(stubZeros, data.maxI),
-        };
-    }
-
-    /** Append `missing` zero-value stubs after real data (negative-count mode). */
-    private _padRight(data: BucketedTelemetryData, missing: number, realCount: number, pad: boolean): BucketedTelemetryData {
-        if (!pad) {
-            return data;
-        }
-
-        const spacing = realCount > 1
-            ? (data.timestamps[realCount - 1] - data.timestamps[0]) / (realCount - 1)
-            : this.sampleIntervalUs;
-
-        const lastRealTs = data.timestamps[realCount - 1] + this.tZeroOffset;
-        const stubTimestamps = new Float64Array(missing);
-        const stubZeros = new Float32Array(missing);
-        for (let i = 0; i < missing; i++) {
-            stubTimestamps[i] = lastRealTs + (i + 1) * spacing - this.tZeroOffset;
-        }
-
-        return {
-            timestamps: concatFloat64(data.timestamps, stubTimestamps),
-            avgV: concatFloat32(data.avgV, stubZeros),
-            minV: concatFloat32(data.minV, stubZeros),
-            maxV: concatFloat32(data.maxV, stubZeros),
-            avgI: concatFloat32(data.avgI, stubZeros),
-            minI: concatFloat32(data.minI, stubZeros),
-            maxI: concatFloat32(data.maxI, stubZeros),
-        };
-    }
-
     // ── Helpers ──
 
     /** Recompute _lockOffset from current cursor position (offset from data-start). */
@@ -722,32 +601,4 @@ export class ScopeEngine {
         const dataStart = len < cap ? cap - len : 0;
         this._lockOffset = Math.max(0, pos - dataStart);
     }
-
-    private _emptyBuckets(): BucketedTelemetryData {
-        return {
-            timestamps: new Float64Array(0),
-            avgV: new Float32Array(0),
-            minV: new Float32Array(0),
-            maxV: new Float32Array(0),
-            avgI: new Float32Array(0),
-            minI: new Float32Array(0),
-            maxI: new Float32Array(0),
-        };
-    }
-}
-
-// ── Typed array concatenation helpers ──
-
-function concatFloat64(a: Float64Array, b: Float64Array): Float64Array {
-    const out = new Float64Array(a.length + b.length);
-    out.set(a, 0);
-    out.set(b, a.length);
-    return out;
-}
-
-function concatFloat32(a: Float32Array, b: Float32Array): Float32Array {
-    const out = new Float32Array(a.length + b.length);
-    out.set(a, 0);
-    out.set(b, a.length);
-    return out;
 }

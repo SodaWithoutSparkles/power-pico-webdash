@@ -6,6 +6,16 @@ import { useEffect, useRef, useCallback } from "react";
 import { useScopeStore } from "../../store/scopeStore";
 import { ScopeEngine } from "../ingest/ScopeEngine";
 import { useStore } from "../../store/useStore";
+import {
+    DATA_REFRESH_MS,
+    SESSION_TOTALS_INTERVAL,
+    DEBUG_LOG_INTERVAL,
+    STALL_WARN_THRESHOLD,
+    STALL_RESET_THRESHOLD,
+    INITIAL_BUCKET_COUNT,
+    SERIAL_BAUD_RATE,
+    SERIAL_LOG_INTERVAL_MS,
+} from "../constants";
 
 /**
  * Hook that owns the scope engine on the main thread.
@@ -20,7 +30,7 @@ export function useScopeEngineManager() {
     const rafRef = useRef<number>(0);
     const lastDataTs = useRef(0);
     const frameCount = useRef(0);
-    const bucketCountRef = useRef(200);
+    const bucketCountRef = useRef(INITIAL_BUCKET_COUNT);
 
     const setEngineRef = useScopeStore((s) => s.setEngineRef);
     const setStatus = useScopeStore((s) => s.setStatus);
@@ -48,7 +58,7 @@ export function useScopeEngineManager() {
         }
         try {
             const port = await navigator.serial.requestPort();
-            await port.open({ baudRate: 115200 });
+            await port.open({ baudRate: SERIAL_BAUD_RATE });
 
             const engine = engineRef.current;
             if (engine) {
@@ -70,7 +80,7 @@ export function useScopeEngineManager() {
                         if (!value) continue;
                         bytesRead += value.length;
                         const now = performance.now();
-                        if (now - lastLogTs > 2000) {
+                        if (now - lastLogTs > SERIAL_LOG_INTERVAL_MS) {
                             console.log('[scope] Serial reader: ' + bytesRead + ' bytes read, ' + (bytesRead / ((now - lastLogTs) / 1000)).toFixed(0) + ' B/s, engine sampleCount=' + (engineRef.current?.sampleCount ?? 0));
                             lastLogTs = now;
                             bytesRead = 0;
@@ -160,7 +170,7 @@ export function useScopeEngineManager() {
             // 2. Fetch bucketed data (~30 fps) — runs even when paused so the graph stays alive
             if (engine.ring.length > 0) {
                 const dataTs = now - lastDataTs.current;
-                if (dataTs >= 33 || lastDataTs.current === 0) {
+                if (dataTs >= DATA_REFRESH_MS || lastDataTs.current === 0) {
                     // ~30 fps data refresh — engine.getLatestWindow also updates hysteresis internally
                     lastDataTs.current = now;
                     const data = engine.getLatestWindow(bucketCountRef.current);
@@ -171,12 +181,12 @@ export function useScopeEngineManager() {
                     // Stall detection
                     if (prevTotalSamples > 0) {
                         const newSamples = status.observationCount - prevTotalSamples;
-                        if (newSamples > 1000 && !stallWarned) {
+                        if (newSamples > STALL_WARN_THRESHOLD && !stallWarned) {
                             console.warn(
                                 "[perf] ⚠ " + newSamples + " new observations — render may be falling behind",
                             );
                             stallWarned = true;
-                        } else if (newSamples < 100) {
+                        } else if (newSamples < STALL_RESET_THRESHOLD) {
                             stallWarned = false;
                         }
                     }
@@ -191,13 +201,13 @@ export function useScopeEngineManager() {
             }
 
             // 3. Session totals (~2 fps)
-            if (frameCount.current % 30 === 0) {
+            if (frameCount.current % SESSION_TOTALS_INTERVAL === 0) {
                 setSessionTotals(engine.getSessionTotals());
             }
 
             // 4. Periodic debug log (~1 Hz)
             debugLogInterval++;
-            if (debugLogInterval % 60 === 0) {
+            if (debugLogInterval % DEBUG_LOG_INTERVAL === 0) {
                 const st = engine.computeStatus();
                 console.log(
                     '[scope] tick mode=' + st.mode +
@@ -206,7 +216,7 @@ export function useScopeEngineManager() {
                     ' fill=' + (st.bufferFillPct * 100).toFixed(1) + '%' +
                     ' smp/s=' + st.samplesPerSec +
                     ' ring.len=' + engine.ring.length +
-                    ' display.len=' + ((engine as any)._displayMeanRing?.length ?? 0) +
+                    ' display.len=' + (engine.displayLength ?? 0) +
                     ' lastDataTs=' + (lastDataTs.current > 0 ? (now - lastDataTs.current).toFixed(0) + 'ms ago' : 'never')
                 );
             }

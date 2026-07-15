@@ -7,6 +7,7 @@ import "uplot/dist/uPlot.min.css";
 import { useScopeStore } from "../../store/scopeStore";
 import { tierToLabel } from "../lib/hysteresis";
 import type { BucketedTelemetryData } from "../types/workerTypes";
+import { BUCKET_COUNT_MIN, BUCKET_COUNT_MAX, BUCKET_PX_RATIO, MIN_DRAG_WIDTH } from "../constants";
 
 // ── Channel styling ──
 
@@ -217,7 +218,7 @@ export const ScopeCanvas: React.FC = () => {
                 setSelect: [
                     (self: uPlot) => {
                         const { left, width } = self.select;
-                        if (width > 5) {
+                        if (width > MIN_DRAG_WIDTH) {
                             const startVal = self.posToVal(left, "x");
                             const endVal = self.posToVal(left + width, "x");
                             const startTs = BigInt(Math.round(startVal));
@@ -242,8 +243,8 @@ export const ScopeCanvas: React.FC = () => {
                 const { width: w, height: h } = entry.contentRect;
                 if (w > 0 && h > 0) {
                     u.setSize({ width: w, height: h });
-                    // Update bucket count proportional to chart width (2× pixels, clamped [50,500])
-                    const bc = Math.max(50, Math.min(500, Math.round(w * 2)));
+                    // Update bucket count proportional to chart width
+                    const bc = Math.max(BUCKET_COUNT_MIN, Math.min(BUCKET_COUNT_MAX, Math.round(w * BUCKET_PX_RATIO)));
                     useScopeStore.getState().setBucketCount(bc);
                 }
             }
@@ -259,7 +260,7 @@ export const ScopeCanvas: React.FC = () => {
             if (!dragActive) return;
             dragActive = false;
             const { left, width } = u.select;
-            if (width > 5) {
+            if (width > MIN_DRAG_WIDTH) {
                 const startVal = u.posToVal(left, "x");
                 const endVal = u.posToVal(left + width, "x");
                 const startTs = BigInt(Math.round(startVal));
