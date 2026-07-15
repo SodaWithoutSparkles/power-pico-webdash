@@ -355,11 +355,11 @@ export class ScopeEngine {
     }
 
     private ingestObservation(tsUs: number, voltage: number, current: number): void {
-        const adjustedTs = BigInt(Math.round(tsUs)) - BigInt(Math.round(this.tZeroOffset));
-        this.ring.push(adjustedTs, voltage, current);
-        this.integrator.push(adjustedTs, voltage, current);
-        this.extremes.push(adjustedTs, voltage, current);
-        this._pushToDisplayRings(adjustedTs, voltage, current);
+        const rawTs = BigInt(Math.round(tsUs));
+        this.ring.push(rawTs, voltage, current);
+        this.integrator.push(rawTs, voltage, current);
+        this.extremes.push(rawTs, voltage, current);
+        this._pushToDisplayRings(rawTs, voltage, current);
         this.sampleCount++;
         this._rateAccumCount++;
 
@@ -395,7 +395,7 @@ export class ScopeEngine {
 
     /** Slice the logical range [start, end) across all three display rings into a BucketedTelemetryData. */
     private _sliceDisplay(start: number, end: number): BucketedTelemetryData {
-        return sliceDisplay(this._displayMaxRing, this._displayMeanRing, this._displayMinRing, start, end);
+        return sliceDisplay(this._displayMaxRing, this._displayMeanRing, this._displayMinRing, start, end, this.tZeroOffset);
     }
 
     /** Create the three display rings and optional temp ring with standard options. */

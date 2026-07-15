@@ -12,6 +12,7 @@ export function sliceDisplay(
     minRing: { voltages: Float32Array; currents: Float32Array; capacity: number; tailIdx: number },
     start: number,
     end: number,
+    tZeroOffset = 0,
 ): BucketedTelemetryData {
     const count = end - start;
     const cap = meanRing.capacity;
@@ -25,9 +26,10 @@ export function sliceDisplay(
     const minI = new Float32Array(count);
     const maxI = new Float32Array(count);
 
+    const offset = Math.round(tZeroOffset);
     for (let i = 0; i < count; i++) {
         const idx = (tail + start + i) % cap;
-        timestamps[i] = Number(meanRing.timestamps[idx]);
+        timestamps[i] = Number(meanRing.timestamps[idx]) - offset;
         avgV[i] = meanRing.voltages[idx];
         avgI[i] = meanRing.currents[idx];
         maxV[i] = maxRing.voltages[idx];
