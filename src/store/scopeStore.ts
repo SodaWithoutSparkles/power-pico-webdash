@@ -82,16 +82,26 @@ const defaultStatus: ScopeStatus = {
     packetWarning: null,
 };
 
+// Debounced apply so rapid config changes (e.g. resize) don't replay the raw ring every frame.
+let _applyTimer: ReturnType<typeof setTimeout> | null = null;
+const _doApply = (eng: ScopeEngine, cfg: ScopeConfig) => {
+    eng.setDisplayWindow(cfg.windowSize, cfg.avgSize);
+    eng.avgMode = cfg.avgMode;
+    eng.sampleIntervalUs = 1_000_000 / cfg.nominalSampleRate;
+};
+
 export const useScopeStore = create<ScopeStoreState>((set, get) => ({
     config: defaultConfig,
     status: defaultStatus,
     setConfig: (patch) => set((s) => ({ config: { ...s.config, ...patch } })),
     applyConfigToEngine: () => {
-        const { config, engineRef } = get();
-        if (!engineRef) return;
-        engineRef.setDisplayWindow(config.windowSize, config.avgSize);
-        engineRef.avgMode = config.avgMode;
-        engineRef.sampleIntervalUs = 1_000_000 / config.nominalSampleRate;
+        if (_applyTimer) clearTimeout(_applyTimer);
+        _applyTimer = setTimeout(() => {
+            _applyTimer = null;
+            const { config, engineRef } = get();
+            if (!engineRef) return;
+            _doApply(engineRef, config);
+        }, 100);
     },
     setStatus: (status) => set({ status }),
 

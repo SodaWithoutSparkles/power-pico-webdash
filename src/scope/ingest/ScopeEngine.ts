@@ -19,6 +19,8 @@ export class ScopeEngine {
     avgMode: "simple" | "lttb" = "simple";
     /** Expected interval between observations (µs). Used for zero-stub timestamp spacing. */
     sampleIntervalUs: number = 100; // default 100µs = 10 kHz
+    /** When true (default), short display windows get zero-padded stubs so the trace edge stays stable. */
+    zeroPadEnabled: boolean = true;
 
     // ── Display rings (bucketed min/mean/max series) ──
     // All three are always the same length (same push pattern in ingestSample).
@@ -33,29 +35,48 @@ export class ScopeEngine {
     private _avgWindowSize: number;
     private _displayCapacity: number;
 
-    /**
-     * Cursor offset from the TAIL (oldest data).
-     *   0          = oldest element in the display ring.
-     *   len        = past-the-end (at head / newest).
-     *
-     * When followIngest=true, _cursorOffset is set to len after every ingest
-     * (cursor always at the newest data).
-     *
-     * When followIngest=false, _cursorOffset stays pinned. New data fills in
-     * at the head; the cursor remains at the same logical position from tail
-     * so the visible window is pinned to the same portion of the trace.
-     * Once the ring wraps, tail advances and the window slides forward.
-     *
-     * Uses sentinel -1 for "not explicitly moved"; readDisplayWindow treats it as len.
-     */
-    private _cursorOffset = -1;
+    /** Cursor position as fraction [0,1] of the display ring. 0 = tail, 1 = head. */
+    private _readCursor = 1;
+
+    private _followIngest = true;
 
     /**
-     * When true (default), the display cursor snaps to the newest data
-     * after every ingest — the window always shows live data.
-     * When false, the cursor stays where you put it (decoupled / scroll mode).
+     * When true (default), the cursor auto-advances at the same rate as ingest
+     * so the visible window stays locked to a fixed time offset from the live
+     * head.  Only meaningful when followIngest=false.
      */
-    followIngest = true;
+    private _cursorLocked = true;
+    get cursorLocked(): boolean { return this._cursorLocked; }
+    set cursorLocked(v: boolean) {
+        this._cursorLocked = v;
+        if (v && !this._followIngest) {
+            this._refreshLockOffset();
+        }
+    }
+    /** Distance in raw samples from cursor right edge to logical data-start. -1 = unset. */
+    private _lockOffset = -1;
+
+    /**
+     * When true (default), ingestion pushes samples through to the display rings
+     * and cursor is at 1 (latest). When set to false, the display rings freeze.
+     * When re-enabled, the display rings are rebuilt from the raw ring and cursor
+     * snaps back to 1.
+     */
+    get followIngest(): boolean { return this._followIngest; }
+    set followIngest(v: boolean) {
+        if (this._followIngest === v) return;
+        this._followIngest = v;
+        if (v) {
+            this._displayMaxRing.clear();
+            this._displayMeanRing.clear();
+            this._displayMinRing.clear();
+            this._readCursor = 1;
+            this._lockOffset = -1;
+            this._replayRawRing();
+        } else if (this._cursorLocked) {
+            this._refreshLockOffset();
+        }
+    }
 
     // ── Scale hysteresis (Schmitt trigger, updated on getLatestWindow) ──
 
@@ -128,7 +149,7 @@ export class ScopeEngine {
         this._avgWindowSize = avgWindowSize;
         this._displayCapacity = displayCapacity;
         this._createDisplayRings(displayCapacity, avgWindowSize);
-        this._cursorOffset = -1;
+        this._readCursor = 1;
 
         // Replay existing raw data into the new display rings
         this._replayRawRing();
@@ -139,87 +160,63 @@ export class ScopeEngine {
     get avgWindowSize(): number { return this._avgWindowSize; }
     get displayCapacity(): number { return this._displayCapacity; }
 
-    // ── Display cursor ──
-
-    /** Resolve the effective cursor offset. Sentinel -1 = always at end. */
-    private _effectiveOffset(): number {
-        const len = this._displayMeanRing.length;
-        if (len === 0) return 0;
-        if (this._cursorOffset < 0) return len;
-        return Math.min(this._cursorOffset, len);
-    }
-
-    /** Move cursor to the newest data (offset = len, i.e. at head). */
-    setCursorToEnd(): void {
-        this._cursorOffset = this._displayMeanRing.length;
-    }
-
-    /**
-     * Move cursor to a fraction of the display ring: 0.0 = oldest, 1.0 = newest.
-     */
+    // ── Display cursor (fraction [0,1] over the display ring) ──
     setCursorToFraction(f: number): void {
-        const len = this._displayMeanRing.length;
-        if (len === 0) { this._cursorOffset = 0; return; }
-        const clamped = Math.max(0, Math.min(1, f));
-        this._cursorOffset = Math.round(clamped * len);
+        this._readCursor = Math.max(0, Math.min(1, f));
+        if (this.cursorLocked) {
+            this._refreshLockOffset();
+        }
     }
 
-    /** Current cursor position as a fraction [0, 1]. 1 = newest. */
     getCursorFraction(): number {
-        const len = this._displayMeanRing.length;
-        const off = this._effectiveOffset();
-        return len > 0 ? off / len : 0;
+        return this._readCursor;
     }
 
     // ── Reading from display rings ──
 
     /**
-     * Read up to `count` display buckets ending at the cursor position.
-     * Cursor is clamped to [0, len]. Sentinel -1 defaults to len (newest).
+     * Read up to `count` display buckets relative to `_readCursor`.
+     * +ve count = read from cursor leftward (toward tail / older data).
+     * -ve count = read from cursor rightward (toward head / newer data).
      *
-     * When the display ring has fewer than `count` items, the leading slots
-     * are zero-padded with properly-spaced timestamps so the trace appears
-     * stable from the left edge rather than slowly growing.
+     * When the display ring has fewer than `count` items in the requested
+     * direction, the leading (or trailing) slots are zero-padded with
+     * properly-spaced timestamps so the trace edge stays stable.
      *
+     * @param count  Number of buckets. +ve = leftward from cursor, -ve = rightward.
+     * @param pad    Optional override for zero-padding. `true` = pad, `false` = no pad,
+     *               omitted = use `zeroPadEnabled`. Defaults to `zeroPadEnabled`.
      * Returns points in chronological order.
      */
-    readDisplayWindow(count: number): BucketedTelemetryData {
-        if (count <= 0) return this._emptyBuckets();
+    readDisplayWindow(count: number, pad?: boolean): BucketedTelemetryData {
+        if (count === 0) return this._emptyBuckets();
+
+        if (!this._followIngest) {
+            return this._readFromRawRing(count, pad);
+        }
+
         const len = this._displayMeanRing.length;
         if (len === 0) return this._emptyBuckets();
 
-        const cursor = this._effectiveOffset();
-        const start = Math.max(0, cursor - count);
-        if (start >= cursor) return this._emptyBuckets();
+        // Ingest-following mode: cursor is at 1 (head), read from display ring
+        if (count > 0) {
+            const start = Math.max(0, len - count);
+            const realCount = len - start;
+            const missing = count - realCount;
+            if (missing <= 0) {
+                return this._sliceDisplay(start, len);
+            }
+            return this._padLeft(this._sliceDisplay(start, len), missing, realCount, pad ?? this.zeroPadEnabled);
+        }
 
-        const realCount = cursor - start;
-        const missing = count - realCount; // zero pads needed at the front
-
+        const absCount = -count;
+        const end = Math.min(absCount, len);
+        const realCount = end;
+        const missing = absCount - realCount;
         if (missing <= 0) {
-            return this._sliceDisplay(start, cursor);
+            return this._sliceDisplay(0, end);
         }
-
-        // ── Zero-pad: prepend stubs when display ring hasn't filled yet ──
-        // Read real data first
-        const realData = this._sliceDisplay(start, cursor);
-
-        // Compute first real timestamp to backfill from
-        const firstRealTs = realData.timestamps[0] + this.tZeroOffset; // undo T+0 for stub calc
-        const stubTimestamps = new Float64Array(missing);
-        const stubZeros = new Float32Array(missing);
-        for (let i = 0; i < missing; i++) {
-            stubTimestamps[i] = firstRealTs - (missing - i) * this.sampleIntervalUs;
-        }
-
-        return {
-            timestamps: concatFloat64(stubTimestamps, realData.timestamps),
-            avgV: concatFloat32(stubZeros, realData.avgV),
-            minV: concatFloat32(stubZeros, realData.minV),
-            maxV: concatFloat32(stubZeros, realData.maxV),
-            avgI: concatFloat32(stubZeros, realData.avgI),
-            minI: concatFloat32(stubZeros, realData.minI),
-            maxI: concatFloat32(stubZeros, realData.maxI),
-        };
+        return this._padRight(this._sliceDisplay(0, end), missing, realCount, pad ?? this.zeroPadEnabled);
     }
 
     /**
@@ -229,11 +226,7 @@ export class ScopeEngine {
      *
      * Also updates the scale hysteresis using the ring's cached peak current.
      */
-    getLatestWindow(count: number): BucketedTelemetryData {
-        if (this.followIngest) {
-            this.setCursorToEnd();
-        }
-
+    getLatestWindow(count: number, pad?: boolean): BucketedTelemetryData {
         // Update scale hysteresis with real wall-clock delta
         const now = performance.now();
         const deltaMs = this._hysteresisLastMs > 0 ? now - this._hysteresisLastMs : 16;
@@ -246,7 +239,7 @@ export class ScopeEngine {
         this._hysteresisDownTimer = updated.downTimer;
         this._hysteresisLastMs = now;
 
-        return this.readDisplayWindow(count);
+        return this.readDisplayWindow(count, pad);
     }
 
     /** Integrate a range of the raw ring buffer. */
@@ -280,7 +273,8 @@ export class ScopeEngine {
         this._displayMaxRing.clear();
         this._displayMeanRing.clear();
         this._displayMinRing.clear();
-        this._cursorOffset = -1;
+        this._readCursor = 1;
+        this._lockOffset = -1;
         this.parser.reset();
         this.integrator.reset();
         this.extremes.reset();
@@ -409,16 +403,144 @@ export class ScopeEngine {
         this.ring.push(rawTs, voltage, current);
         this.integrator.push(rawTs, voltage, current);
         this.extremes.push(rawTs, voltage, current);
-        this._pushToDisplayRings(rawTs, voltage, current);
+        if (this._followIngest) {
+            this._pushToDisplayRings(rawTs, voltage, current);
+        } else if (this.cursorLocked && this._lockOffset >= 0) {
+            // Slide cursor left so offset from data-start stays constant
+            const cap = this.ring.capacity;
+            const len = this.ring.length;
+            const dataStart = len < cap ? cap - len : 0;
+            const targetPos = Math.max(dataStart, dataStart + this._lockOffset);
+            this._readCursor = Math.min(1, targetPos / cap);
+        }
         this.sampleCount++;
         this._rateAccumCount++;
+    }
 
-        // Advance cursor to head when following live; otherwise clamp to valid range
-        if (this.followIngest) {
-            this._cursorOffset = this._displayMeanRing.length;
-        } else if (this._cursorOffset >= 0) {
-            this._cursorOffset = Math.min(this._cursorOffset, this._displayMeanRing.length);
+    /**
+     * Read `count` display buckets from the raw ring. The right edge of the
+     * window is at `_readCursor` fraction of the raw ring's logical buffer.
+     * +ve count = leftward from cursor (older), -ve = rightward (newer).
+     */
+    private _readFromRawRing(count: number, pad?: boolean): BucketedTelemetryData {
+        const rawCap = this.ring.capacity;
+        const rawLen = this.ring.length;
+        const tail = this.ring.tailIdx;
+        const avgSz = this._avgWindowSize;
+        const absCount = Math.abs(count);
+        const totalSamples = absCount * avgSz;
+
+        // Right edge of the window, rounded to a raw sample index
+        const logicalEnd = Math.round(this._readCursor * rawCap);
+        if (logicalEnd <= 0) return this._emptyBuckets();
+        if (logicalEnd > rawCap) return this._emptyBuckets();
+
+        // Data occupies the rightmost portion of the logical buffer when not full
+        const dataStart = rawLen < rawCap ? rawCap - rawLen : 0;
+
+        if (count > 0) {
+            // Read `count` buckets leftward from cursor (older data)
+            const logicalStart = logicalEnd - totalSamples;
+            if (logicalStart < dataStart) {
+                // Window extends into empty region — clamp
+                const availableSamples = logicalEnd - dataStart;
+                if (availableSamples <= 0) return this._emptyBuckets();
+                const availableBuckets = Math.floor(availableSamples / avgSz);
+                if (availableBuckets <= 0) return this._emptyBuckets();
+                return this._readFromRawRing(Math.min(count, availableBuckets), pad);
+            }
+
+            const timestamps = new Float64Array(absCount);
+            const avgV = new Float32Array(absCount);
+            const minV = new Float32Array(absCount);
+            const maxV = new Float32Array(absCount);
+            const avgI = new Float32Array(absCount);
+            const minI = new Float32Array(absCount);
+            const maxI = new Float32Array(absCount);
+
+            // Map logicalStart to physical index
+            const p = rawLen < rawCap ? logicalStart - dataStart : (tail + logicalStart) % rawCap;
+
+            for (let d = 0; d < absCount; d++) {
+                const baseIdx = (p + d * avgSz) % rawCap;
+                let sumV = 0, sumI = 0;
+                let minVv = Infinity, maxVv = -Infinity;
+                let minIi = Infinity, maxIi = -Infinity;
+
+                for (let j = 0; j < avgSz; j++) {
+                    const idx = (baseIdx + j) % rawCap;
+                    const v = this.ring.voltages[idx];
+                    const i = this.ring.currents[idx];
+                    sumV += v;
+                    sumI += i;
+                    if (v < minVv) minVv = v;
+                    if (v > maxVv) maxVv = v;
+                    if (i < minIi) minIi = i;
+                    if (i > maxIi) maxIi = i;
+                }
+
+                timestamps[d] = Number(this.ring.timestamps[baseIdx]) - this.tZeroOffset;
+                avgV[d] = sumV / avgSz;
+                minV[d] = minVv;
+                maxV[d] = maxVv;
+                avgI[d] = sumI / avgSz;
+                minI[d] = minIi;
+                maxI[d] = maxIi;
+            }
+
+            return { timestamps, avgV, minV, maxV, avgI, minI, maxI };
         }
+
+        // ── Negative count: read rightward from cursor ──
+        const logicalStart = logicalEnd;
+        const logicalStop = logicalStart + totalSamples;
+        if (logicalStop > rawCap) {
+            // Past head — clamp
+            const availableSamples = rawCap - logicalStart;
+            if (availableSamples <= 0) return this._emptyBuckets();
+            const availableBuckets = Math.floor(availableSamples / avgSz);
+            if (availableBuckets <= 0) return this._emptyBuckets();
+            return this._readFromRawRing(-availableBuckets, pad);
+        }
+
+        const timestamps = new Float64Array(absCount);
+        const avgV = new Float32Array(absCount);
+        const minV = new Float32Array(absCount);
+        const maxV = new Float32Array(absCount);
+        const avgI = new Float32Array(absCount);
+        const minI = new Float32Array(absCount);
+        const maxI = new Float32Array(absCount);
+
+        const p = rawLen < rawCap ? logicalStart - dataStart : (tail + logicalStart) % rawCap;
+
+        for (let d = 0; d < absCount; d++) {
+            const baseIdx = (p + d * avgSz) % rawCap;
+            let sumV = 0, sumI = 0;
+            let minVv = Infinity, maxVv = -Infinity;
+            let minIi = Infinity, maxIi = -Infinity;
+
+            for (let j = 0; j < avgSz; j++) {
+                const idx = (baseIdx + j) % rawCap;
+                const v = this.ring.voltages[idx];
+                const i = this.ring.currents[idx];
+                sumV += v;
+                sumI += i;
+                if (v < minVv) minVv = v;
+                if (v > maxVv) maxVv = v;
+                if (i < minIi) minIi = i;
+                if (i > maxIi) maxIi = i;
+            }
+
+            timestamps[d] = Number(this.ring.timestamps[baseIdx]) - this.tZeroOffset;
+            avgV[d] = sumV / avgSz;
+            minV[d] = minVv;
+            maxV[d] = maxVv;
+            avgI[d] = sumI / avgSz;
+            minI[d] = minIi;
+            maxI[d] = maxIi;
+        }
+
+        return { timestamps, avgV, minV, maxV, avgI, minI, maxI };
     }
 
     /** Push a single sample through the averaging pipeline into the display rings. */
@@ -492,10 +614,10 @@ export class ScopeEngine {
     computeStatus(): StatusPayload {
         const now = performance.now();
 
-        // Smooth samples/s over ~800ms to avoid jitter
+        // Smooth samples/s over ~500ms to avoid jitter
         if (this._rateAccumStart === 0) this._rateAccumStart = now;
         const dtMs = now - this._rateAccumStart;
-        if (dtMs >= 800) {
+        if (dtMs >= 500) {
             this.samplesPerSec = Math.round((this._rateAccumCount / dtMs) * 1000);
             this._rateAccumStart = now;
             this._rateAccumCount = 0;
@@ -532,7 +654,74 @@ export class ScopeEngine {
         return this.extremes.getExtremes();
     }
 
+    // ── Zero-padding helpers ──
+
+    /** Prepend `missing` zero-value stubs before real data (positive-count mode). */
+    private _padLeft(data: BucketedTelemetryData, missing: number, realCount: number, pad: boolean): BucketedTelemetryData {
+        if (!pad) {
+            return data;
+        }
+
+        const spacing = realCount > 1
+            ? (data.timestamps[realCount - 1] - data.timestamps[0]) / (realCount - 1)
+            : this.sampleIntervalUs;
+
+        const firstRealTs = data.timestamps[0] + this.tZeroOffset;
+        const stubTimestamps = new Float64Array(missing);
+        const stubZeros = new Float32Array(missing);
+        for (let i = 0; i < missing; i++) {
+            stubTimestamps[i] = firstRealTs - (missing - i) * spacing - this.tZeroOffset;
+        }
+
+        return {
+            timestamps: concatFloat64(stubTimestamps, data.timestamps),
+            avgV: concatFloat32(stubZeros, data.avgV),
+            minV: concatFloat32(stubZeros, data.minV),
+            maxV: concatFloat32(stubZeros, data.maxV),
+            avgI: concatFloat32(stubZeros, data.avgI),
+            minI: concatFloat32(stubZeros, data.minI),
+            maxI: concatFloat32(stubZeros, data.maxI),
+        };
+    }
+
+    /** Append `missing` zero-value stubs after real data (negative-count mode). */
+    private _padRight(data: BucketedTelemetryData, missing: number, realCount: number, pad: boolean): BucketedTelemetryData {
+        if (!pad) {
+            return data;
+        }
+
+        const spacing = realCount > 1
+            ? (data.timestamps[realCount - 1] - data.timestamps[0]) / (realCount - 1)
+            : this.sampleIntervalUs;
+
+        const lastRealTs = data.timestamps[realCount - 1] + this.tZeroOffset;
+        const stubTimestamps = new Float64Array(missing);
+        const stubZeros = new Float32Array(missing);
+        for (let i = 0; i < missing; i++) {
+            stubTimestamps[i] = lastRealTs + (i + 1) * spacing - this.tZeroOffset;
+        }
+
+        return {
+            timestamps: concatFloat64(data.timestamps, stubTimestamps),
+            avgV: concatFloat32(data.avgV, stubZeros),
+            minV: concatFloat32(data.minV, stubZeros),
+            maxV: concatFloat32(data.maxV, stubZeros),
+            avgI: concatFloat32(data.avgI, stubZeros),
+            minI: concatFloat32(data.minI, stubZeros),
+            maxI: concatFloat32(data.maxI, stubZeros),
+        };
+    }
+
     // ── Helpers ──
+
+    /** Recompute _lockOffset from current cursor position (offset from data-start). */
+    private _refreshLockOffset(): void {
+        const cap = this.ring.capacity;
+        const len = this.ring.length;
+        const pos = Math.round(this._readCursor * cap);
+        const dataStart = len < cap ? cap - len : 0;
+        this._lockOffset = Math.max(0, pos - dataStart);
+    }
 
     private _emptyBuckets(): BucketedTelemetryData {
         return {

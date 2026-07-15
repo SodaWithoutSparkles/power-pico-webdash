@@ -20,6 +20,7 @@ export function useScopeEngineManager() {
     const rafRef = useRef<number>(0);
     const lastDataTs = useRef(0);
     const frameCount = useRef(0);
+    const bucketCountRef = useRef(200);
 
     const setEngineRef = useScopeStore((s) => s.setEngineRef);
     const setStatus = useScopeStore((s) => s.setStatus);
@@ -129,6 +130,13 @@ export function useScopeEngineManager() {
         const prevDisconnect = useScopeStore.getState().disconnectSerial;
         useScopeStore.setState({ connectSerial, disconnectSerial: disconnect });
 
+        // Sync bucketCount ref on resize (avoid reading store every frame)
+        const unsub = useScopeStore.subscribe((state, prev) => {
+            if (state.bucketCount !== prev.bucketCount) {
+                bucketCountRef.current = state.bucketCount;
+            }
+        });
+
         // ── rAF render loop ──
         // Updates status every frame, fetches data ~30 fps, session ~2 fps.
 
@@ -155,9 +163,7 @@ export function useScopeEngineManager() {
                 if (dataTs >= 33 || lastDataTs.current === 0) {
                     // ~30 fps data refresh — engine.getLatestWindow also updates hysteresis internally
                     lastDataTs.current = now;
-                    const state = useScopeStore.getState();
-                    const bucketCount = state.bucketCount;
-                    const data = engine.getLatestWindow(bucketCount);
+                    const data = engine.getLatestWindow(bucketCountRef.current);
 
                     setLatestData(data);
                     setHysteresisTier(engine.scaleTier);
@@ -211,6 +217,7 @@ export function useScopeEngineManager() {
         rafRef.current = requestAnimationFrame(tick);
 
         return () => {
+            unsub();
             cancelAnimationFrame(rafRef.current);
             rafRef.current = 0;
             engine.stopSimulate();
