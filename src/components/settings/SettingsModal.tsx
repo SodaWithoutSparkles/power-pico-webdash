@@ -1,10 +1,11 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { useScopeStore } from '../../store/scopeStore';
-import { X, Zap, Activity, Gauge, Database, Monitor, Sliders } from 'lucide-react';
+import { X, Zap, Activity, Gauge, Database, Monitor, Sliders, Crosshair } from 'lucide-react';
 import clsx from 'clsx';
 import { Toggle } from '../common/Toggle';
 import { SettingsEntry } from './SettingsEntry';
 import { SettingsEntryGroup } from './SettingsEntryGroup';
+import { CalibratePanel } from './CalibratePanel';
 
 // ── Helpers ──
 
@@ -100,6 +101,7 @@ const CATEGORIES: Category[] = [
     { id: 'buffer', label: 'Buffer', icon: Database },
     { id: 'channels', label: 'Channels', icon: Sliders },
     { id: 'display', label: 'Display', icon: Monitor },
+    { id: 'calibrate', label: 'Calibrate', icon: Crosshair },
 ];
 
 // ── Panel components ──
@@ -365,6 +367,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ open, onClose }) =
         buffer: <BufferPanel />,
         channels: <ChannelsPanel />,
         display: <DisplayPanel />,
+        calibrate: <CalibratePanel />,
     };
 
     return (

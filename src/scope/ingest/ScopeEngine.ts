@@ -2,7 +2,7 @@
 // Owns the ring buffer, packet parser, integrator, simulator, and format engine.
 // Replaces the Web Worker design — called directly from the main thread.
 
-import { PacketParser } from "../decode/decode";
+import { PacketParser, LOW_CUR, MID_CUR, HIGH_CUR } from "../decode/decode";
 import { TelemetryRingBuffer } from "../ring/TelemetryRingBuffer";
 import { DualStageIntegrator, integrateRange } from "../lib/integrator";
 import { ExtremesTracker } from "../lib/extremesTracker";
@@ -99,8 +99,16 @@ export class ScopeEngine {
     deltaBetweenPackets = 0; // time between last two packets (us)
     expectedSamplesPerPacket = 100;
     packetSmoothing = -1; // -1 = smooth entire packet
+
+    // Calibration offsets applied at decode time
+    voltageOffset = 0;
+    currentOffsetLow = 0;
+    currentOffsetMid = 0;
+    currentOffsetHigh = 0;
     onPacketWarning: ((msg: string) => void) | null = null;
     private _lastPacketWarning: string | null = null;
+    private _packetCount = 0;
+    private _totalSamplesInPackets = 0;
 
     constructor(capacity = 1_000_000, displayCapacity = 10_000, avgWindowSize = 10) {
         if (avgWindowSize < 1) throw new Error("avgWindowSize must be >= 1");
@@ -273,6 +281,8 @@ export class ScopeEngine {
         this._rateAccumCount = 0;
         this._rateAccumStart = 0;
         this._lastPacketWarning = null;
+        this._packetCount = 0;
+        this._totalSamplesInPackets = 0;
         this._simSavedTUs = 0;
         this._simSavedWallPerfMs = 0;
     }
@@ -329,7 +339,12 @@ export class ScopeEngine {
     /** Push a single (timestamp, voltage, current) observation directly. */
     pushSample(tsUs: number, voltage: number, current: number): void {
         if (!this.running || this.ingestingPaused) return;
-        this.ingestObservation(tsUs, voltage, current);
+        // Apply calibration offsets (no range info, use currentOffsetLow as generic)
+        this.ingestObservation(
+            tsUs,
+            voltage - this.voltageOffset,
+            current - this.currentOffsetLow,
+        );
     }
 
     pushSerialData(data: Uint8Array): void {
@@ -345,6 +360,8 @@ export class ScopeEngine {
     private _ingestDecodedPacket(pkt: import("../decode/decode").DecodedPacket): void {
         this.deltaBetweenPackets = pkt.timestampUs - this.lastPacketTS;
         this.lastPacketTS = pkt.timestampUs;
+        this._packetCount++;
+        this._totalSamplesInPackets += pkt.samples.length;
 
         // Check for undersized packet
         if (pkt.samples.length < this.expectedSamplesPerPacket) {
@@ -361,15 +378,20 @@ export class ScopeEngine {
 
         const dt = this.deltaBetweenPackets / pkt.samples.length;
 
-        // Average raw samples into observations
+        // Average raw samples into observations, applying calibration offsets
         let accV = 0, accI = 0, accCount = 0;
         // ts = first sample time in current group
         let groupFirstTs = pkt.timestampUs - this.deltaBetweenPackets + dt;
         // Sample k (0-indexed) gets time = pkt.timestampUs - this.deltaBetweenPackets + (k+1) * dt
         for (let i = 0; i < pkt.samples.length; i++) {
             const s = pkt.samples[i];
-            accV += s.volts;
-            accI += s.amps;
+            // Apply calibration offsets per-sample (decode knows current range)
+            const vOff = s.volts - this.voltageOffset;
+            let aOff = s.amps;
+            if (s.range === LOW_CUR) aOff -= this.currentOffsetLow;
+            else if (s.range === MID_CUR) aOff -= this.currentOffsetMid;
+            else if (s.range === HIGH_CUR) aOff -= this.currentOffsetHigh;
+            accV += vOff; accI += aOff;
             accCount++;
             this._rateAccumCount++;
             const tEnd = pkt.timestampUs - this.deltaBetweenPackets + (i + 1) * dt;
@@ -576,6 +598,7 @@ export class ScopeEngine {
             mode: this.mode,
             samplesPerSec: this.samplesPerSec,
             observationCount: this.sampleCount,
+            avgSamplesPerPacket: this._packetCount > 0 ? Math.round(this._totalSamplesInPackets / this._packetCount) : 0,
             bufferFillPct: this.ring.fillPct,
             liveV,
             liveI,

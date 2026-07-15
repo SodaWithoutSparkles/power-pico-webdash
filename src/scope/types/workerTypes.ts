@@ -27,6 +27,7 @@ export interface StatusPayload {
     mode: "idle" | "serial" | "simulate";
     samplesPerSec: number;
     observationCount: number;
+    avgSamplesPerPacket: number;
     bufferFillPct: number;
     liveV: number;
     liveI: number;

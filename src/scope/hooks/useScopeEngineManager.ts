@@ -132,7 +132,7 @@ export function useScopeEngineManager() {
         engine.packetSmoothing = cfg.packetSmoothing;
         engine.sampleIntervalUs = 1_000_000 / cfg.nominalSampleRate;
         engine.onPacketWarning = (msg) => {
-            useStore.getState().addNotification({ type: 'error', title: 'Packet Warning', message: msg });
+            useStore.getState().addNotification({ type: 'warning', title: 'Packet Warning', message: msg, id: 'pkt-warn', dismissDelay: 3000 });
         };
         engineRef.current = engine;
         setEngineRef(engine);

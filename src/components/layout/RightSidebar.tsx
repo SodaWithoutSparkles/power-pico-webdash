@@ -68,7 +68,7 @@ export const RightSidebar: React.FC = () => {
     // Push raw status values through the smoother
     const now = performance.now();
     smootherRef.current.push(status.liveV, status.liveI, status.liveW, now);
-    const smooth = smootherRef.current.getSmoothed();
+    const smooth = smootherRef.current.getSmoothed(now);
 
     const cur = fmtCurrentParts(smooth.i, hysteresisTier);
 

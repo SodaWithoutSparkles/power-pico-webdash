@@ -6,6 +6,9 @@ import type { ScopeConfig, ScopeStatus } from "../scope/types/engineTypes";
 import type { BucketedTelemetryData } from "../scope/types/workerTypes";
 import type { ScopeEngine } from "../scope/ingest/ScopeEngine";
 import type { ScaleTier } from "../scope/lib/hysteresis";
+import { readJSON, writeJSON } from "./storage";
+
+const SCOPE_CONFIG_KEY = "scope_config";
 
 export interface SelectionResult {
     energyJ: number;
@@ -63,7 +66,7 @@ export interface ScopeStoreState {
     disconnectSerial: () => Promise<void>;
 }
 
-const defaultConfig: ScopeConfig = {
+const BASE_DEFAULTS: ScopeConfig = {
     baudRate: 115200,
     ringCapacity: 1_000_000,
     avgSize: 50,
@@ -73,13 +76,30 @@ const defaultConfig: ScopeConfig = {
     nominalSampleRate: 10000,
     expectedSamplesPerPacket: 10,
     packetSmoothing: -1,
+    voltageOffset: 0,
+    currentOffsetLow: 0,
+    currentOffsetMid: 0,
+    currentOffsetHigh: 0,
 };
+
+/** Merge persisted config on top of base defaults. */
+function loadConfig(): ScopeConfig {
+    const saved = readJSON<Partial<ScopeConfig>>(SCOPE_CONFIG_KEY, {});
+    return { ...BASE_DEFAULTS, ...saved };
+}
+
+function persistConfig(cfg: ScopeConfig): void {
+    writeJSON(SCOPE_CONFIG_KEY, cfg);
+}
+
+const defaultConfig: ScopeConfig = loadConfig();
 
 const defaultStatus: ScopeStatus = {
     running: false,
     mode: "idle",
     samplesPerSec: 0,
     observationCount: 0,
+    avgSamplesPerPacket: 0,
     bufferFillPct: 0,
     lastTimestampUs: 0,
     liveV: 0,
@@ -96,12 +116,21 @@ const _doApply = (eng: ScopeEngine, cfg: ScopeConfig) => {
     eng.setDisplayWindow(cfg.windowSize, cfg.avgSize);
     eng.avgMode = cfg.avgMode;
     eng.sampleIntervalUs = 1_000_000 / cfg.nominalSampleRate;
+    // Sync calibration offsets to the engine (applied at decode time)
+    eng.voltageOffset = cfg.voltageOffset;
+    eng.currentOffsetLow = cfg.currentOffsetLow;
+    eng.currentOffsetMid = cfg.currentOffsetMid;
+    eng.currentOffsetHigh = cfg.currentOffsetHigh;
 };
 
 export const useScopeStore = create<ScopeStoreState>((set, get) => ({
     config: defaultConfig,
     status: defaultStatus,
-    setConfig: (patch) => set((s) => ({ config: { ...s.config, ...patch } })),
+    setConfig: (patch) => set((s) => {
+        const next = { ...s.config, ...patch };
+        persistConfig(next);
+        return { config: next };
+    }),
     applyConfigToEngine: () => {
         if (_applyTimer) clearTimeout(_applyTimer);
         _applyTimer = setTimeout(() => {

@@ -8,7 +8,7 @@ import { useScopeStore } from "../../store/scopeStore";
 import { tierToLabel } from "../lib/hysteresis";
 import type { BucketedTelemetryData } from "../types/workerTypes";
 import { BUCKET_COUNT_MIN, BUCKET_COUNT_MAX, BUCKET_PX_RATIO, MIN_DRAG_WIDTH } from "../constants";
-import { fmtSI } from "../format/formatValue";
+import { fmtSI, fmtCurrent } from "../format/formatValue";
 
 // ── Channel styling ──
 
@@ -49,6 +49,70 @@ function toAlignedData(data: BucketedTelemetryData): uPlot.AlignedData {
         wMin,               // [8] W min (band low)
         wMax,               // [9] W max (band high)
     ];
+}
+
+// ── Hover tooltip plugin ──
+
+function tooltipPlugin(): uPlot.Plugin {
+    let tooltip: HTMLDivElement;
+
+    return {
+        hooks: {
+            init: (u: uPlot) => {
+                tooltip = document.createElement("div");
+                const s = tooltip.style;
+                s.position = "absolute";
+                s.pointerEvents = "none";
+                s.display = "none";
+                s.zIndex = "100";
+                s.background = "rgba(17, 24, 39, 0.94)";
+                s.border = "1px solid #4B5563";
+                s.borderRadius = "4px";
+                s.padding = "3px 8px";
+                s.font = "11px/1.5 ui-monospace, SFMono-Regular, monospace";
+                s.color = "#D1D5DB";
+                s.whiteSpace = "nowrap";
+                u.over.appendChild(tooltip);
+
+                u.over.addEventListener("mouseenter", () => { s.display = ""; });
+                u.over.addEventListener("mouseleave", () => { s.display = "none"; });
+            },
+            setCursor: (u: uPlot) => {
+                const { left = 0, top = 0, idx } = u.cursor;
+                if (idx == null) return;
+
+                const data = u.data;
+                const t = data[0][idx];
+                if (t == null) return;
+
+                const tier = useScopeStore.getState().hysteresisTier;
+                const ch = useScopeStore.getState().config.channels;
+
+                const parts: string[] = [
+                    `<span style="color:#9CA3AF">t</span><span>${fmtTime(t)}</span>`,
+                ];
+
+                if (ch.v) {
+                    const v = data[1][idx];
+                    if (v != null) parts.push(`<span style="color:${CHANNELS.v.stroke}">V</span><span>${fmtSI(v, "V", 3)}</span>`);
+                }
+                if (ch.i) {
+                    const i = data[4][idx];
+                    if (i != null) parts.push(`<span style="color:${CHANNELS.i.stroke}">I</span><span>${fmtCurrent(i, tier)}</span>`);
+                }
+                if (ch.w) {
+                    const w = data[7][idx];
+                    if (w != null) parts.push(`<span style="color:${CHANNELS.w.stroke}">P</span><span>${fmtSI(w, "W", 3)}</span>`);
+                }
+
+                tooltip.innerHTML = `<div style="display:grid;grid-template-columns:auto 1fr;gap:0 12px;">${parts.join("")}</div>`;
+
+                // Position slightly right of cursor, roughly vertically centred
+                tooltip.style.left = Math.max(0, Math.min(left + 14, u.width - tooltip.offsetWidth - 4)) + "px";
+                tooltip.style.top = Math.max(0, Math.min(top - 12, u.height - tooltip.offsetHeight)) + "px";
+            },
+        },
+    };
 }
 
 // ── Axis formatters ──
@@ -119,26 +183,26 @@ export const ScopeCanvas: React.FC = () => {
             series: [
                 {},                                                         // [0] x
                 { scale: "v", stroke: CHANNELS.v.stroke, width: 1.5, label: "V", value: (_, v) => fmtSI(v ?? 0, "V", 3) },       // [1] V avg
-                { scale: "v", fill: CHANNELS.v.fill, width: 0 },  // [2] V min (band, no line)
-                { scale: "v", fill: CHANNELS.v.fill, width: 0 },  // [3] V max (band, no line)
+                { scale: "v", width: 0 },                                 // [2] V min (band lower edge, no line)
+                { scale: "v", width: 0 },                                 // [3] V max (band upper edge, no line)
                 {
                     scale: "i", stroke: CHANNELS.i.stroke, width: 1.5, label: "I", value: (_, v) => {
                         const tier = useScopeStore.getState().hysteresisTier;
                         return fmtCurrentByTier(v ?? 0, tier);
                     }
                 },        // [4] I avg
-                { scale: "i", fill: CHANNELS.i.fill, width: 0 },  // [5] I min (band, no line)
-                { scale: "i", fill: CHANNELS.i.fill, width: 0 },  // [6] I max (band, no line)
+                { scale: "i", width: 0 },                                 // [5] I min (band lower edge, no line)
+                { scale: "i", width: 0 },                                 // [6] I max (band upper edge, no line)
                 { scale: "w", stroke: CHANNELS.w.stroke, width: 1.5, label: "W", value: (_, v) => fmtSI(v ?? 0, "W", 3) },       // [7] W avg
-                { scale: "w", fill: CHANNELS.w.fill, width: 0 },  // [8] W min (band, no line)
-                { scale: "w", fill: CHANNELS.w.fill, width: 0 },  // [9] W max (band, no line)
+                { scale: "w", width: 0 },                                 // [8] W min (band lower edge, no line)
+                { scale: "w", width: 0 },                                 // [9] W max (band upper edge, no line)
             ],
 
-            // ── Envelope bands (min→max fill) ──
+            // ── Envelope bands (max→min fill) ──
             bands: [
-                { series: [2, 3], fill: CHANNELS.v.fill },
-                { series: [5, 6], fill: CHANNELS.i.fill },
-                { series: [8, 9], fill: CHANNELS.w.fill },
+                { series: [3, 2], fill: CHANNELS.v.fill },
+                { series: [6, 5], fill: CHANNELS.i.fill },
+                { series: [9, 8], fill: CHANNELS.w.fill },
             ],
 
             // ── Axes ──
@@ -195,6 +259,9 @@ export const ScopeCanvas: React.FC = () => {
                     size: 56,
                 },
             ],
+
+            // ── Plugins ──
+            plugins: [tooltipPlugin()],
 
             // ── Selection (drag for Phase D integration) ──
             select: {
