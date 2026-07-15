@@ -154,7 +154,8 @@ export function useScopeEngineManager() {
                 if (dataTs >= 33 || lastDataTs.current === 0) {
                     // ~30 fps data refresh — engine.getLatestWindow also updates hysteresis internally
                     lastDataTs.current = now;
-                    const data = engine.getLatestWindow(200);
+                    const bucketCount = useScopeStore.getState().bucketCount;
+                    const data = engine.getLatestWindow(bucketCount);
 
                     setLatestData(data);
                     setHysteresisTier(engine.scaleTier);

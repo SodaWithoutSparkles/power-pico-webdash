@@ -40,6 +40,10 @@ export interface ScopeStoreState {
     hysteresisTier: ScaleTier;
     setHysteresisTier: (t: ScaleTier) => void;
 
+    // Dynamic viewport bucket count (auto-computed from chart width × 2, clamped [50,500])
+    bucketCount: number;
+    setBucketCount: (n: number) => void;
+
     // T+0 toggle state
     tZeroSet: boolean;
     setTZeroSet: (v: boolean) => void;
@@ -101,6 +105,9 @@ export const useScopeStore = create<ScopeStoreState>((set, get) => ({
 
     hysteresisTier: "ma" as ScaleTier,
     setHysteresisTier: (hysteresisTier) => set({ hysteresisTier }),
+
+    bucketCount: 200,
+    setBucketCount: (bucketCount) => set({ bucketCount }),
 
     tZeroSet: false,
     setTZeroSet: (tZeroSet) => set({ tZeroSet }),

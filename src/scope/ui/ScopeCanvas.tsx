@@ -106,9 +106,9 @@ export const ScopeCanvas: React.FC = () => {
             // ── Scales ──
             scales: {
                 x: { time: false },
-                v: { auto: true },
-                i: { auto: true },
-                w: { auto: true },
+                v: { auto: true, range: [0, null] },
+                i: { auto: true, range: [0, null] },
+                w: { auto: true, range: [0, null] },
             },
 
             // ── Series ──
@@ -236,12 +236,15 @@ export const ScopeCanvas: React.FC = () => {
         const u = new uPlot(opts, initData, container);
         uplotRef.current = u;
 
-        // ── Resize ──
+        // ── Resize + dynamic bucket count ──
         const observer = new ResizeObserver((entries) => {
             for (const entry of entries) {
                 const { width: w, height: h } = entry.contentRect;
                 if (w > 0 && h > 0) {
                     u.setSize({ width: w, height: h });
+                    // Update bucket count proportional to chart width (2× pixels, clamped [50,500])
+                    const bc = Math.max(50, Math.min(500, Math.round(w * 2)));
+                    useScopeStore.getState().setBucketCount(bc);
                 }
             }
         });
