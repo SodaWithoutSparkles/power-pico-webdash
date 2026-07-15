@@ -15,6 +15,7 @@ function fmtTimestamp(us: number): string {
 export const BottomBar: React.FC = () => {
     const status = useScopeStore((s) => s.status);
     const engineRef = useScopeStore((s) => s.engineRef);
+    const config = useScopeStore((s) => s.config);
 
     const toggleRunning = useCallback(() => {
         if (status.running) {
@@ -61,6 +62,7 @@ export const BottomBar: React.FC = () => {
             <span className="tabular-nums">
                 {(status.bufferFillPct * 100).toFixed(0)}% Buf
             </span>
+            <span className="tabular-nums text-gray-500">Avg {config.avgSize}</span>
 
             <div className="ml-auto" />
 

@@ -52,10 +52,15 @@ export function decodePacket(packet: Uint8Array): DecodedPacket {
 
     // Timestamp: little-endian uint64. JS numbers lose precision past 2^53;
     // device μs counter wraps at ~585k years, so Number is safe for display math.
+    //
+    // Bitwise ops operate on signed 32-bit integers, so the high byte of each
+    // dword (packet[5] and packet[9]) can set the sign bit.  Use >>>0 to coerce
+    // back to unsigned before the 64-bit reconstruction.  Without this, the
+    // timestamp goes negative when the low 32 bits exceed 2^31 (~35.8 min).
     const lo =
-        packet[2] | (packet[3] << 8) | (packet[4] << 16) | (packet[5] << 24);
+        (packet[2] | (packet[3] << 8) | (packet[4] << 16) | (packet[5] << 24)) >>> 0;
     const hi =
-        packet[6] | (packet[7] << 8) | (packet[8] << 16) | (packet[9] << 24);
+        (packet[6] | (packet[7] << 8) | (packet[8] << 16) | (packet[9] << 24)) >>> 0;
     const timestampUs = lo + hi * 0x1_0000_0000;
 
     const dataCount = packet[10];

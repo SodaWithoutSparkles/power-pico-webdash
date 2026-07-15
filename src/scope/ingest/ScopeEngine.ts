@@ -246,7 +246,7 @@ export class ScopeEngine {
     getIntegration(
         startTs: bigint,
         endTs: bigint,
-    ): { energyJ: number; chargeC: number; dtUs: number } {
+    ): import("../lib/integrator").IntegrationResult {
         return integrateRange(this.ring, startTs, endTs);
     }
 

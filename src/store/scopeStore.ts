@@ -11,6 +11,12 @@ export interface SelectionResult {
     energyJ: number;
     chargeC: number;
     dtUs: number;
+    fromTs: number;   // μs
+    toTs: number;     // μs
+    avgV: number;
+    peakV: number;
+    avgI: number;
+    peakI: number;
 }
 
 export interface ScopeStoreState {

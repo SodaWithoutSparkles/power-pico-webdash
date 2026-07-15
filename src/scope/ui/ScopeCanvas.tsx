@@ -270,6 +270,10 @@ export const ScopeCanvas: React.FC = () => {
                     const result = engineRef.getIntegration(startTs, endTs);
                     state.setSelection(result);
                 }
+            } else {
+                // Click without drag → clear selection
+                useScopeStore.getState().setSelection(null);
+                u.setSelect({ left: 0, top: 0, width: 0, height: 0 });
             }
         };
         u.over.addEventListener("mousedown", onDown);

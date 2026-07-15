@@ -63,26 +63,43 @@ export class DualStageIntegrator {
     }
 }
 
+export interface IntegrationResult {
+    energyJ: number;
+    chargeC: number;
+    dtUs: number;
+    fromTs: number;
+    toTs: number;
+    avgV: number;
+    peakV: number;
+    avgI: number;
+    peakI: number;
+}
+
 /**
  * Integrate a range of the ring buffer [startTs, endTs) in a single pass.
- * Returns energy (J), charge (C), and duration (μs) over that window.
+ * Returns energy (J), charge (C), duration (μs), and avg/peak V/I.
  */
 export function integrateRange(
     ring: TelemetryRingBuffer,
     startTs: bigint,
     endTs: bigint,
-): { energyJ: number; chargeC: number; dtUs: number } {
+): IntegrationResult {
     const startIdx = ring.binarySearch(startTs);
-    if (startIdx < 0) return { energyJ: 0, chargeC: 0, dtUs: 0 };
+    if (startIdx < 0) return emptyResult(Number(startTs), Number(endTs));
 
     let endIdx = ring.binarySearch(endTs);
     if (endIdx < 0) endIdx = ring.length;
 
-    if (endIdx <= startIdx) return { energyJ: 0, chargeC: 0, dtUs: 0 };
+    if (endIdx <= startIdx) return emptyResult(Number(startTs), Number(endTs));
 
     let energyJ = 0;
     let chargeC = 0;
     let prevTs: bigint | null = null;
+    let sumV = 0;
+    let sumI = 0;
+    let peakV = -Infinity;
+    let peakI = -Infinity;
+    let count = 0;
 
     const cap = ring.capacity;
     let idx = startIdx;
@@ -93,6 +110,12 @@ export function integrateRange(
         const v = ring.voltages[idx];
         const c = ring.currents[idx];
 
+        sumV += v;
+        sumI += c;
+        if (v > peakV) peakV = v;
+        if (c > peakI) peakI = c;
+        count++;
+
         if (prevTs !== null) {
             const dt = Number(ts - prevTs) / 1e9;
             chargeC += c * dt;
@@ -102,9 +125,25 @@ export function integrateRange(
         idx = (idx + 1) % cap;
     }
 
-    const dtUs = prevTs !== null ? Number(prevTs - ring.timestamps[startIdx]) : 0;
+    const fromTs = Number(ring.timestamps[startIdx]);
+    const toTs = prevTs !== null ? Number(prevTs) : fromTs;
+    const dtUs = toTs - fromTs;
 
-    return { energyJ, chargeC, dtUs };
+    return {
+        energyJ,
+        chargeC,
+        dtUs,
+        fromTs,
+        toTs,
+        avgV: count > 0 ? sumV / count : 0,
+        peakV: peakV === -Infinity ? 0 : peakV,
+        avgI: count > 0 ? sumI / count : 0,
+        peakI: peakI === -Infinity ? 0 : peakI,
+    };
+}
+
+function emptyResult(fromTs: number, toTs: number): IntegrationResult {
+    return { energyJ: 0, chargeC: 0, dtUs: 0, fromTs, toTs, avgV: 0, peakV: 0, avgI: 0, peakI: 0 };
 }
 
 function _rangeLen(startIdx: number, endIdx: number, capacity: number, count: number): number {

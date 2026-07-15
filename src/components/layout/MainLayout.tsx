@@ -4,7 +4,6 @@ import { LeftSidebar } from './LeftSidebar';
 import { RightSidebar } from './RightSidebar';
 import { BottomBar } from './BottomBar';
 import { ScopeCanvas } from '../../scope/ui/ScopeCanvas';
-import { Measurements } from '../../scope/ui/Measurements';
 import { useScopeEngineManager } from '../../scope/hooks/useScopeEngineManager';
 
 export const MainLayout: React.FC = () => {
@@ -27,13 +26,8 @@ export const MainLayout: React.FC = () => {
                 </div>
 
                 {/* Right Panel — settings + measurements */}
-                <div className="flex flex-col border-l border-gray-700">
-                    <div className="flex-1 overflow-y-auto">
-                        <RightSidebar />
-                    </div>
-                    <div className="border-t border-gray-700 p-3 bg-gray-800/50">
-                        <Measurements />
-                    </div>
+                <div className="flex flex-col border-l border-gray-700 relative">
+                    <RightSidebar />
                 </div>
             </div>
 

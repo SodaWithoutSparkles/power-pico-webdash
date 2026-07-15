@@ -52,6 +52,31 @@ test("decodePacket: volts and amps math matches decode.py", () => {
     assert.equal(s.amps, ((curAdc - refAdc) * SCALE_LOW_UA_PER_LSB) / 1_000_000.0);
 });
 
+test("decodePacket: timestamp beyond 2^31 does not go negative (signed 32-bit overflow)", () => {
+    // 2^31 µs ≈ 35.8 min.  Bit 31 set in low dword triggers sign extension
+    // in JS bitwise ops.  Regression test for the >>>0 fix.
+    const justBelow = 0x7fff_ffff; // 2^31 - 1, ~35.79 min
+    const atBoundary = 0x8000_0000; // 2^31,    ~35.79 min
+    const justAbove = 0x8000_0001;  // 2^31 + 1, ~35.79 min
+    const wayAbove = 0x1_0000_0000; // 2^32,    ~71.58 min (hi becomes 1)
+
+    let d = decodePacket(buildPacket(justBelow, [[LOW_CUR, 1, 2, 1]]));
+    assert.equal(d.timestampUs, justBelow);
+    assert.ok(d.timestampUs > 0);
+
+    d = decodePacket(buildPacket(atBoundary, [[LOW_CUR, 1, 2, 1]]));
+    assert.equal(d.timestampUs, atBoundary);
+    assert.ok(d.timestampUs > 0);
+
+    d = decodePacket(buildPacket(justAbove, [[LOW_CUR, 1, 2, 1]]));
+    assert.equal(d.timestampUs, justAbove);
+    assert.ok(d.timestampUs > 0);
+
+    d = decodePacket(buildPacket(wayAbove, [[LOW_CUR, 1, 2, 1]]));
+    assert.equal(d.timestampUs, wayAbove);
+    assert.ok(d.timestampUs > 0);
+});
+
 test("decodePacket: each current range uses its own scale", () => {
     const cur = 2000;
     const ref = 1000;
