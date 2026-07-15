@@ -41,6 +41,26 @@ export function computeBucketRanges(
 }
 
 
+/**
+ * Compute the ideal avgWindowSize (raw samples per display bucket) for a
+ * given visible time span and target bucket count.
+ *
+ * When zoomed in (small `visibleTimeSpanUs` → fewer samples per bucket → higher resolution).
+ * When zoomed out (large `visibleTimeSpanUs` → more samples per bucket → coarser resolution).
+ *
+ * Clamped to [1, 1000] to prevent pathological values.
+ */
+export function computeIdealAvgWindowSize(
+    visibleTimeSpanUs: number,
+    targetBucketCount: number,
+    sampleIntervalUs: number,
+): number {
+    if (targetBucketCount <= 0 || sampleIntervalUs <= 0 || visibleTimeSpanUs <= 0) return 1;
+    const usPerBucket = visibleTimeSpanUs / targetBucketCount;
+    const samplesPerBucket = Math.round(usPerBucket / sampleIntervalUs);
+    return Math.max(1, Math.min(1000, samplesPerBucket));
+}
+
 export function calculateBuckets(
     data: ArrayLike<number>,
     bucketCount: number,

@@ -91,6 +91,7 @@ export const useScopeStore = create<ScopeStoreState>((set, get) => ({
         if (!engineRef) return;
         engineRef.setDisplayWindow(config.windowSize, config.avgSize);
         engineRef.avgMode = config.avgMode;
+        engineRef.sampleIntervalUs = 1_000_000 / config.nominalSampleRate;
     },
     setStatus: (status) => set({ status }),
 

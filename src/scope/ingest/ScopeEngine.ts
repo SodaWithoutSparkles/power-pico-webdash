@@ -17,6 +17,8 @@ export class ScopeEngine {
     readonly integrator: DualStageIntegrator;
     readonly extremes: ExtremesTracker;
     avgMode: "simple" | "lttb" = "simple";
+    /** Expected interval between observations (µs). Used for zero-stub timestamp spacing. */
+    sampleIntervalUs: number = 100; // default 100µs = 10 kHz
 
     // ── Display rings (bucketed min/mean/max series) ──
     // All three are always the same length (same push pattern in ingestSample).
@@ -73,6 +75,10 @@ export class ScopeEngine {
 
     private parser: PacketParser;
     private _simWorker: Worker | null = null;
+
+    // Simulator timestamp continuity across stop/start
+    private _simSavedTUs = 0;
+    private _simSavedWallPerfMs = 0;
 
     running = false;
     /** When true, ingestion (serial data, pushSample) is skipped but graph rendering continues. */
@@ -170,6 +176,11 @@ export class ScopeEngine {
     /**
      * Read up to `count` display buckets ending at the cursor position.
      * Cursor is clamped to [0, len]. Sentinel -1 defaults to len (newest).
+     *
+     * When the display ring has fewer than `count` items, the leading slots
+     * are zero-padded with properly-spaced timestamps so the trace appears
+     * stable from the left edge rather than slowly growing.
+     *
      * Returns points in chronological order.
      */
     readDisplayWindow(count: number): BucketedTelemetryData {
@@ -181,7 +192,34 @@ export class ScopeEngine {
         const start = Math.max(0, cursor - count);
         if (start >= cursor) return this._emptyBuckets();
 
-        return this._sliceDisplay(start, cursor);
+        const realCount = cursor - start;
+        const missing = count - realCount; // zero pads needed at the front
+
+        if (missing <= 0) {
+            return this._sliceDisplay(start, cursor);
+        }
+
+        // ── Zero-pad: prepend stubs when display ring hasn't filled yet ──
+        // Read real data first
+        const realData = this._sliceDisplay(start, cursor);
+
+        // Compute first real timestamp to backfill from
+        const firstRealTs = realData.timestamps[0] + this.tZeroOffset; // undo T+0 for stub calc
+        const stubTimestamps = new Float64Array(missing);
+        const stubZeros = new Float32Array(missing);
+        for (let i = 0; i < missing; i++) {
+            stubTimestamps[i] = firstRealTs - (missing - i) * this.sampleIntervalUs;
+        }
+
+        return {
+            timestamps: concatFloat64(stubTimestamps, realData.timestamps),
+            avgV: concatFloat32(stubZeros, realData.avgV),
+            minV: concatFloat32(stubZeros, realData.minV),
+            maxV: concatFloat32(stubZeros, realData.maxV),
+            avgI: concatFloat32(stubZeros, realData.avgI),
+            minI: concatFloat32(stubZeros, realData.minI),
+            maxI: concatFloat32(stubZeros, realData.maxI),
+        };
     }
 
     /**
@@ -253,6 +291,8 @@ export class ScopeEngine {
         this._rateAccumCount = 0;
         this._rateAccumStart = 0;
         this._lastPacketWarning = null;
+        this._simSavedTUs = 0;
+        this._simSavedWallPerfMs = 0;
     }
 
     disconnect(): void {
@@ -276,11 +316,21 @@ export class ScopeEngine {
                 }
             }
         };
-        this._simWorker.postMessage({ type: "start" });
+        this._simWorker.postMessage({
+            type: "start",
+            savedTUs: this._simSavedTUs,
+            savedWallMs: this._simSavedWallPerfMs,
+            nowPerf: performance.now(),
+        });
     }
 
     stopSimulate(): void {
         if (this._simWorker) {
+            // Save engine-side timestamp before destroying the worker.
+            // lastPacketTS is the last received packet timestamp; the worker's
+            // internal tUs will be ~1000µs ahead, which is negligible for phase continuity.
+            this._simSavedTUs = this.lastPacketTS;
+            this._simSavedWallPerfMs = performance.now();
             this._simWorker.terminate();
             this._simWorker = null;
         }
@@ -495,4 +545,20 @@ export class ScopeEngine {
             maxI: new Float32Array(0),
         };
     }
+}
+
+// ── Typed array concatenation helpers ──
+
+function concatFloat64(a: Float64Array, b: Float64Array): Float64Array {
+    const out = new Float64Array(a.length + b.length);
+    out.set(a, 0);
+    out.set(b, a.length);
+    return out;
+}
+
+function concatFloat32(a: Float32Array, b: Float32Array): Float32Array {
+    const out = new Float32Array(a.length + b.length);
+    out.set(a, 0);
+    out.set(b, a.length);
+    return out;
 }

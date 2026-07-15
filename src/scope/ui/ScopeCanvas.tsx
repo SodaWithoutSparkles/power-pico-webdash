@@ -264,10 +264,11 @@ export const ScopeCanvas: React.FC = () => {
                 const endVal = u.posToVal(left + width, "x");
                 const startTs = BigInt(Math.round(startVal));
                 const endTs = BigInt(Math.round(endVal));
-                const { engineRef } = useScopeStore.getState();
+                const state = useScopeStore.getState();
+                const { engineRef } = state;
                 if (engineRef) {
                     const result = engineRef.getIntegration(startTs, endTs);
-                    useScopeStore.getState().setSelection(result);
+                    state.setSelection(result);
                 }
             }
         };

@@ -29,18 +29,25 @@ export const ZoomPreview: React.FC = () => {
     const displayFrac = isDragging.current ? cursorFrac : liveFrac;
     const leftPos = displayFrac * maxLeft;
 
+    /** Apply a zoom factor to avgSize, keeping windowSize at bucketCount so the graph stays full. */
+    const _applyZoom = useCallback((zoomFactor: number) => {
+        const state = useScopeStore.getState();
+        const eng = state.engineRef;
+        if (!eng) return;
+        const rc = eng.ring.capacity;
+        const bc = state.bucketCount;
+        const newAvgSize = Math.max(1, Math.round(config.avgSize * zoomFactor));
+        const maxAvg = Math.floor(rc / bc);
+        const clampedAvg = Math.min(newAvgSize, Math.max(1, maxAvg || 1000));
+        state.setConfig({ windowSize: Math.max(bc, config.windowSize), avgSize: clampedAvg });
+        state.applyConfigToEngine();
+    }, [config.avgSize, config.windowSize]);
+
     const handleWheel = useCallback((e: React.WheelEvent) => {
         e.preventDefault();
         e.stopPropagation();
-        const delta = e.deltaY > 0 ? 1.15 : 1 / 1.15;
-        const newWindow = Math.round(config.windowSize * delta);
-        const eng = useScopeStore.getState().engineRef;
-        const rc = eng?.ring.capacity ?? 0;
-        const as = config.avgSize;
-        const clamped = Math.max(10, Math.min(Math.floor(rc / (as || 1)), newWindow));
-        useScopeStore.getState().setConfig({ windowSize: clamped });
-        useScopeStore.getState().applyConfigToEngine();
-    }, [config.windowSize, config.avgSize]);
+        _applyZoom(e.deltaY > 0 ? 1.15 : 1 / 1.15);
+    }, [_applyZoom]);
 
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
         e.preventDefault();
@@ -75,21 +82,12 @@ export const ZoomPreview: React.FC = () => {
     }, []);
 
     const handleZoomIn = useCallback(() => {
-        const newWindow = Math.round(config.windowSize / 1.3);
-        const clamped = Math.max(10, newWindow);
-        useScopeStore.getState().setConfig({ windowSize: clamped });
-        useScopeStore.getState().applyConfigToEngine();
-    }, [config.windowSize]);
+        _applyZoom(1 / 1.3);
+    }, [_applyZoom]);
 
     const handleZoomOut = useCallback(() => {
-        const newWindow = Math.round(config.windowSize * 1.3);
-        const eng = useScopeStore.getState().engineRef;
-        const rc = eng?.ring.capacity ?? 0;
-        const as = config.avgSize;
-        const clamped = Math.min(Math.floor(rc / (as || 1)), newWindow);
-        useScopeStore.getState().setConfig({ windowSize: clamped });
-        useScopeStore.getState().applyConfigToEngine();
-    }, [config.windowSize, config.avgSize]);
+        _applyZoom(1.3);
+    }, [_applyZoom]);
 
     const handleBlackClick = useCallback((e: React.MouseEvent) => {
         // Click on black background = jump cursor & snap to live

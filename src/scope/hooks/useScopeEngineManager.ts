@@ -113,6 +113,7 @@ export function useScopeEngineManager() {
         const engine = new ScopeEngine(cfg.ringCapacity);
         engine.expectedSamplesPerPacket = cfg.expectedSamplesPerPacket;
         engine.packetSmoothing = cfg.packetSmoothing;
+        engine.sampleIntervalUs = 1_000_000 / cfg.nominalSampleRate;
         engine.onPacketWarning = (msg) => {
             useStore.getState().addNotification({ type: 'error', title: 'Packet Warning', message: msg });
         };
@@ -154,7 +155,8 @@ export function useScopeEngineManager() {
                 if (dataTs >= 33 || lastDataTs.current === 0) {
                     // ~30 fps data refresh — engine.getLatestWindow also updates hysteresis internally
                     lastDataTs.current = now;
-                    const bucketCount = useScopeStore.getState().bucketCount;
+                    const state = useScopeStore.getState();
+                    const bucketCount = state.bucketCount;
                     const data = engine.getLatestWindow(bucketCount);
 
                     setLatestData(data);

@@ -1,23 +1,26 @@
 // Simulated packet generator running in a Web Worker.
-// Uses elapsed real time to determine how many packets to generate per tick,
-// achieving accurate 10k samples/s (10 samples × 1000 packets/s) regardless
-// of timer resolution limits (~4-16ms on most browsers).
+// Uses *real elapsed wall-clock time* between ticks (not a fixed interval)
+// so the packet rate stays accurate regardless of timer jitter or computer load.
 //
-// The accumulated-counter approach: each tick, add (rate × tickDuration) to an
-// accumulator; generate floor(accumulator) packets; subtract from accumulator.
+// Accumulated-counter approach: each tick, add (rate × realElapsedMs / 1000)
+// to an accumulator; generate floor(accumulator) packets; subtract from accumulator.
 // This ensures the correct average rate even with coarse/irregular ticks.
+//
+// Timestamp is persisted across stop/start so the waveform is continuous.
+// State is saved in the parent ScopeEngine (since terminate() kills the worker).
 
 import { LOW_CUR, type DecodedPacket, type Sample } from "../decode/decode";
 
-const PKT_RATE_HZ = 1000;
-const SAMPLES_PER_PACKET = 10;
+const PKT_RATE_HZ = 1_000;       // 1000 packets/s
+const SAMPLES_PER_PACKET = 10;   // 10 samples/packet → 10k samples/s
 const FREQ_HZ = 0.5;
-const DT_US = 1_000_000 / PKT_RATE_HZ;
+const DT_US = 1_000_000 / PKT_RATE_HZ; // 1000 µs per packet
 const TICK_MS = 5;
 
 let tUs = 0;
 let accumulator = 0;
 let running = false;
+let lastTick = 0;               // performance.now() of the last tick call
 
 function generatePackets(count: number): DecodedPacket[] {
     const packets: DecodedPacket[] = new Array(count);
@@ -48,7 +51,11 @@ function generatePackets(count: number): DecodedPacket[] {
 
 function tick() {
     if (!running) return;
-    accumulator += (PKT_RATE_HZ * TICK_MS) / 1000;
+    const now = performance.now();
+    const elapsedMs = lastTick > 0 ? now - lastTick : TICK_MS;
+    lastTick = now;
+
+    accumulator += (PKT_RATE_HZ * elapsedMs) / 1000;
     const toGenerate = Math.floor(accumulator);
     if (toGenerate > 0) {
         accumulator -= toGenerate;
@@ -60,13 +67,21 @@ function tick() {
 
 self.onmessage = (e: MessageEvent) => {
     switch (e.data.type) {
-        case "start":
+        case "start": {
             running = false; // stop any previous loop
-            tUs = 0;
+            const { savedTUs = 0, savedWallMs = 0, nowPerf = 0 } = e.data;
+            if (savedWallMs > 0 && nowPerf > savedWallMs) {
+                const gapUs = Math.round((nowPerf - savedWallMs) * 1000);
+                tUs = savedTUs + gapUs;
+            } else {
+                tUs = savedTUs;
+            }
             accumulator = 0;
+            lastTick = 0;
             running = true;
             tick();
             break;
+        }
         case "stop":
             running = false;
             break;
