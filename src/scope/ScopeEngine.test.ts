@@ -279,6 +279,50 @@ test("ScopeEngine: readDisplayWindow cursor at 0 reads oldest data", () => {
     e.pause();
 });
 
+// ── CursorLocked after buffer-full test (regression) ──
+
+test("ScopeEngine: cursorLocked decrements cursor 1 per sample after buffer fills", () => {
+    resetTs();
+    // Small capacity so we can fill quickly: cap=30, display=20, avgSize=1
+    const e = new ScopeEngine(30, 20, 1);
+    e.start();
+
+    // Fill the buffer completely
+    injectObservations(e, 30); // timestamps 0–29 at physical 0–29
+    assert.equal(e.ring.length, 30, "buffer should be full");
+
+    // Freeze with cursorLocked=true
+    e.followIngest = false;
+    e.cursorLocked = true;
+
+    // cursor at 1.0 → read newest 4
+    let w = e.readDisplayWindow(4, false);
+    assert.deepEqual(Array.from(w.timestamps), [26, 27, 28, 29], "newest data at freeze time");
+
+    // Push 5 samples (timestamps 30–34, physical 0–4).
+    // Cursor decrements from 30→25 (0.833). Physical read at
+    // p = (tail=5 + logicalStart=21) % 30 = 26 → still timestamps 26-29.
+    injectObservations(e, 5);
+    w = e.readDisplayWindow(4, false);
+    assert.deepEqual(Array.from(w.timestamps), [26, 27, 28, 29], "same physical data after cursor decrement");
+
+    // Push 10 more (timestamps 35–44, physical 5–14).
+    // Cursor decrements to 15 (0.5).  p = (15+11)%30 = 26.
+    injectObservations(e, 10);
+    w = e.readDisplayWindow(4, false);
+    assert.deepEqual(Array.from(w.timestamps), [26, 27, 28, 29], "still same data after more pushes");
+
+    // Now verify cursorLocked=false does NOT move cursor.
+    const fixedCursor = e.getCursorFraction();
+    e.cursorLocked = false;
+    injectObservations(e, 5); // timestamps 45–49, physical 15–19
+    assert.equal(e.getCursorFraction(), fixedCursor, "cursorLocked=false cursor stays fixed");
+    // Data at that logical pos may differ because physical backing changed,
+    // but cursor position itself must be unchanged.
+
+    e.pause();
+});
+
 // ── Simulator test ──
 
 test("Simulator: advances timestamp and produces packets", () => {

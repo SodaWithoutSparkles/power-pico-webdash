@@ -40,7 +40,16 @@ export class ScopeEngine {
             this._refreshLockOffset();
         }
     }
-    /** Distance in raw samples from cursor right edge to logical data-start. -1 = unset. */
+    /**
+     * Cursor offset in raw samples.
+     * When buffer is NOT full: distance from cursor right edge to data-start
+     * (logical start).  As data grows and data-start shrinks, the cursor
+     * slides right to track it.
+     * When buffer IS full: absolute logical position of the cursor (since
+     * data-start = 0).  The ingest loop converts this to a head-distance
+     * so the cursor keeps advancing with live data.
+     * -1 = unset.
+     */
     private _lockOffset = -1;
 
     /**
@@ -418,12 +427,20 @@ export class ScopeEngine {
         if (this._followIngest) {
             this.format.pushToDisplay(rawTs, voltage, current);
         } else if (this.cursorLocked && this._lockOffset >= 0) {
-            // Slide cursor left so offset from data-start stays constant
             const cap = this.ring.capacity;
             const len = this.ring.length;
             const dataStart = len < cap ? cap - len : 0;
-            const targetPos = Math.max(dataStart, dataStart + this._lockOffset);
-            this._readCursor = Math.min(1, targetPos / cap);
+            // Advance cursor by 1 logical position per sample so the
+            // display window scrolls at the same rate as data ingest.
+            // Before full: maintain offset from dataStart (moves left
+            // as data grows, keeping same absolute data visible).
+            // After full: advance cursor directly (head stays ahead by
+            // a fixed distance).
+            const rawPos = Math.round(this._readCursor * cap);
+            const newPos = len < cap
+                ? Math.max(dataStart, dataStart + this._lockOffset)
+                : Math.max(0, rawPos - 1);
+            this._readCursor = Math.min(1, newPos / cap);
         }
         this.sampleCount++;
         this._rateAccumCount++;
@@ -627,6 +644,8 @@ export class ScopeEngine {
         const len = this.ring.length;
         const pos = Math.round(this._readCursor * cap);
         const dataStart = len < cap ? cap - len : 0;
-        this._lockOffset = Math.max(0, pos - dataStart);
+        // Clamp to [0, cap-1] so headDist in the full-branch of
+        // ingestObservation never goes negative.
+        this._lockOffset = Math.max(0, Math.min(cap - 1, pos - dataStart));
     }
 }
