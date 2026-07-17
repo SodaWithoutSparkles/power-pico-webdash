@@ -314,8 +314,14 @@ export const ScopeCanvas: React.FC = () => {
                 if (w > 0 && h > 0) {
                     u.setSize({ width: w, height: h });
                     // Update bucket count proportional to chart width
-                    const bc = Math.max(BUCKET_COUNT_MIN, Math.min(BUCKET_COUNT_MAX, Math.round(w * BUCKET_PX_RATIO)));
+                    // Use config ratio when in semi-auto mode, else default
+                    const state = useScopeStore.getState();
+                    const ratio = state.config.bucketWidthMode === 'semi-auto'
+                        ? state.config.bucketsPerPx
+                        : BUCKET_PX_RATIO;
+                    const bc = Math.max(BUCKET_COUNT_MIN, Math.min(BUCKET_COUNT_MAX, Math.round(w / ratio)));
                     useScopeStore.getState().setBucketCount(bc);
+                    useScopeStore.getState().setChartWidth(Math.round(w));
                 }
             }
         });
