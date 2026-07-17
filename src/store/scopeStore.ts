@@ -121,7 +121,7 @@ const defaultStatus: ScopeStatus = {
 // Debounced apply so rapid config changes (e.g. resize) don't replay the raw ring every frame.
 let _applyTimer: ReturnType<typeof setTimeout> | null = null;
 const _doApply = (eng: ScopeEngine, cfg: ScopeConfig) => {
-    eng.setDisplayWindow(cfg.windowSize, cfg.avgSize);
+    // Set avgMode BEFORE setDisplayWindow so replayRawRing uses the new mode.
     eng.avgMode = cfg.avgMode;
     eng.sampleIntervalUs = 1_000_000 / cfg.nominalSampleRate;
     eng.expectedSamplesPerPacket = cfg.expectedSamplesPerPacket;
@@ -131,6 +131,8 @@ const _doApply = (eng: ScopeEngine, cfg: ScopeConfig) => {
     eng.currentOffsetLow = cfg.currentOffsetLow;
     eng.currentOffsetMid = cfg.currentOffsetMid;
     eng.currentOffsetHigh = cfg.currentOffsetHigh;
+    // Rebuild display rings last — replayRawRing uses the values set above.
+    eng.setDisplayWindow(cfg.windowSize, cfg.avgSize);
 };
 
 export const useScopeStore = create<ScopeStoreState>((set, get) => ({
@@ -147,7 +149,11 @@ export const useScopeStore = create<ScopeStoreState>((set, get) => ({
             _applyTimer = null;
             const { config, engineRef } = get();
             if (!engineRef) return;
-            _doApply(engineRef, config);
+            try {
+                _doApply(engineRef, config);
+            } catch (err) {
+                console.error('[scope] _doApply failed:', err);
+            }
         }, 100);
         // Also recompute bucket count for auto/semi-auto modes
         get().recomputeBucketCount();
