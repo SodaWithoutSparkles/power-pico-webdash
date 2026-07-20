@@ -92,7 +92,8 @@ export const ZoomPreview: React.FC = () => {
     const applyZoom = useCallback((factor: number) => {
         const st = useScopeStore.getState();
         const cfg = st.config;
-        const newAvgSize = Math.max(1, Math.round(cfg.avgSize * factor));
+        const maxAvgSize = Math.floor(cfg.ringCapacity / cfg.windowSize);
+        const newAvgSize = Math.max(1, Math.min(maxAvgSize, Math.round(cfg.avgSize * factor)));
         st.setConfig({ avgSize: newAvgSize });
         st.applyConfigToEngine();
     }, []);
