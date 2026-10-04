@@ -6,6 +6,8 @@ export interface ScopeChannels {
     w: boolean;
 }
 
+export type BucketWidthMode = 'auto' | 'semi-auto' | 'manual';
+
 export interface ScopeConfig {
     baudRate: number;
     ringCapacity: number; // raw ring buffer capacity (applies after reconnect)
@@ -16,6 +18,8 @@ export interface ScopeConfig {
     nominalSampleRate: number; // user-expected samples/s, used for time-based UX
     expectedSamplesPerPacket: number; // expected raw samples per device packet
     packetSmoothing: number; // -1=smooth whole packet, else group size (must divide expectedSamplesPerPacket)
+    bucketWidthMode: BucketWidthMode; // how bucket width is determined
+    bucketsPerPx: number; // buckets per pixel ratio for semi-auto mode (default 2)
     // Calibration offsets
     voltageOffset: number;
     currentOffsetLow: number;

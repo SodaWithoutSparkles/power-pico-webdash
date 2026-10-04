@@ -146,11 +146,18 @@ export class ScopeEngine {
         if (avgWindowSize * displayCapacity > this.ring.capacity)
             throw new Error("avgWindowSize * displayCapacity must be <= raw ring capacity");
 
+        const savedCursor = this._readCursor;
+
         this.format.setDisplayWindow(displayCapacity, avgWindowSize);
         this._readCursor = 1;
 
         // Replay existing raw data into the new display rings
         this.format.replayRawRing(this.ring);
+
+        // Restore cursor when frozen so zoom doesn't snap back to live
+        if (!this._followIngest) {
+            this._readCursor = Math.min(1, Math.max(0, savedCursor));
+        }
     }
 
     get avgWindowSize(): number { return this.format.avgWindowSize; }

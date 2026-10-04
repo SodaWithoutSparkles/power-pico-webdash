@@ -48,7 +48,7 @@ export const INITIAL_BUCKET_COUNT = 200;
 export const BUCKET_COUNT_MIN = 50;
 
 /** Maximum display bucket count. */
-export const BUCKET_COUNT_MAX = 500;
+export const BUCKET_COUNT_MAX = 4000;
 
 /** Pixels per bucket coefficient (chartWidth × this = bucket count). */
 export const BUCKET_PX_RATIO = 2;

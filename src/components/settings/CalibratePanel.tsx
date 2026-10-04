@@ -268,6 +268,8 @@ export const CalibratePanel: React.FC = () => {
             engineRef.currentOffsetMid = patch.currentOffsetMid ?? engineRef.currentOffsetMid;
             engineRef.currentOffsetHigh = patch.currentOffsetHigh ?? engineRef.currentOffsetHigh;
         }
+        // Sync non-offset changes (e.g. nominalSampleRate, expectedSamplesPerPacket) to engine
+        useScopeStore.getState().applyConfigToEngine();
         setStep('idle');
     }, [tableRows, setConfig, engineRef]);
 
